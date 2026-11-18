@@ -1,0 +1,56 @@
+{
+  "name": "desktop-weather",
+  "productName": "Снег на десктопе",
+  "version": "0.1.0",
+  "description": "Погодные эффекты поверх рабочего стола (снег, первый плагин)",
+  "main": "dist/main.js",
+  "author": "Дмитрий Германчук",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "build": "node build.mjs",
+    "start": "npm run build && electron .",
+    "typecheck": "tsc --noEmit",
+    "app": "npm run build && bash scripts/make-app.sh",
+    "win": "npm run build && electron-builder --win --x64 --publish never"
+  },
+  "dependencies": {
+    "pixi.js": "^8.6.6"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^26.18.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.7.2"
+  },
+  "build": {
+    "appId": "com.dmytro.snowdesktop",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "!dist/bin/**",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon_1024.png",
+      "executableName": "snow-desktop"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "snow-setup.exe",
+      "shortcutName": "Снег"
+    }
+  }
+}

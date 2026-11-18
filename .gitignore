@@ -1,0 +1,9 @@
+# зависимости и сборка
+node_modules/
+dist/
+release/
+build/
+
+# мусор ОС и редакторов
+.DS_Store
+*.log

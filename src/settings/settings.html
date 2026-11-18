@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <title>Настройки</title>
+    <style>
+      :root {
+        color-scheme: dark light;
+        --bg: #14161c;
+        --card: #1d2029;
+        --text: #e8ebf2;
+        --muted: #9aa3b2;
+        --accent: #6aa9ff;
+        --border: #2b3040;
+      }
+      @media (prefers-color-scheme: light) {
+        :root {
+          --bg: #f5f6f9;
+          --card: #ffffff;
+          --text: #171a21;
+          --muted: #5d6673;
+          --border: #dfe3ec;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font: 13px/1.45 -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        padding: 18px 20px 88px;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 16px;
+      }
+      h1 {
+        font-size: 15px;
+        font-weight: 600;
+        margin: 0;
+        flex: 1;
+      }
+      select {
+        appearance: none;
+        background: var(--card);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 6px 10px;
+        font-size: 13px;
+      }
+      .row {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 10px 12px;
+        margin-bottom: 8px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .row .label {
+        flex: 1;
+        color: var(--text);
+      }
+      .row .value {
+        color: var(--muted);
+        font-variant-numeric: tabular-nums;
+        min-width: 42px;
+        text-align: right;
+      }
+      input[type='range'] {
+        width: 180px;
+        accent-color: var(--accent);
+      }
+      input[type='color'] {
+        width: 44px;
+        height: 26px;
+        padding: 0;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: transparent;
+      }
+      input[type='checkbox'] {
+        width: 18px;
+        height: 18px;
+        accent-color: var(--accent);
+      }
+      input[type='number'] {
+        width: 56px;
+        background: transparent;
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 3px 6px;
+      }
+      footer {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        padding: 14px 20px;
+        display: flex;
+        gap: 10px;
+        background: linear-gradient(to top, var(--bg) 70%, transparent);
+      }
+      button {
+        font: inherit;
+        padding: 7px 14px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: var(--card);
+        color: var(--text);
+        cursor: pointer;
+      }
+      button.primary {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #08111f;
+        font-weight: 600;
+      }
+      .spacer {
+        flex: 1;
+      }
+      .hint {
+        color: var(--muted);
+        font-size: 12px;
+        margin: 10px 2px 16px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Погода на рабочем столе</h1>
+      <select id="effect" title="Активный эффект"></select>
+    </header>
+
+    <div id="controls"></div>
+    <div class="hint" id="hint">
+      Клики проходят сквозь эффект. Оседание снега на окнах и снеговик — следующие этапы.
+    </div>
+
+    <footer>
+      <button id="pause">Пауза</button>
+      <button id="reset">Сбросить настройки</button>
+      <div class="spacer"></div>
+      <button id="close">Закрыть</button>
+    </footer>
+
+    <script src="./settings.js"></script>
+  </body>
+</html>

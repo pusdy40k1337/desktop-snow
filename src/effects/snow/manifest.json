@@ -1,0 +1,97 @@
+{
+  "id": "snow",
+  "name": "Снег",
+  "version": "1.0.0",
+  "settings": [
+    {
+      "key": "density",
+      "type": "slider",
+      "label": "Густота",
+      "min": 0,
+      "max": 100,
+      "step": 1,
+      "default": 45
+    },
+    {
+      "key": "windSpeed",
+      "type": "slider",
+      "label": "Ветер",
+      "min": -50,
+      "max": 50,
+      "step": 1,
+      "default": 5
+    },
+    {
+      "key": "flakeSize",
+      "type": "range",
+      "label": "Размер хлопьев",
+      "min": 2,
+      "max": 12,
+      "step": 1,
+      "default": [3, 7]
+    },
+    {
+      "key": "fallSpeed",
+      "type": "slider",
+      "label": "Скорость падения",
+      "min": 20,
+      "max": 300,
+      "step": 5,
+      "default": 90
+    },
+    {
+      "key": "sway",
+      "type": "slider",
+      "label": "Покачивание",
+      "min": 0,
+      "max": 100,
+      "step": 1,
+      "default": 35
+    },
+    {
+      "key": "color",
+      "type": "color",
+      "label": "Цвет хлопьев",
+      "default": "#ffffff"
+    },
+    {
+      "key": "accumulate",
+      "type": "toggle",
+      "label": "Оседает на окнах",
+      "default": true
+    },
+    {
+      "key": "blowSpeed",
+      "type": "slider",
+      "label": "Скорость срыва, px/с",
+      "min": 300,
+      "max": 3000,
+      "step": 50,
+      "default": 1200
+    },
+    {
+      "key": "snowOverWindows",
+      "type": "toggle",
+      "label": "Снег поверх окон",
+      "default": true
+    },
+    {
+      "key": "dockMoundHeight",
+      "type": "slider",
+      "label": "Высота снега на Dock, px",
+      "min": 8,
+      "max": 80,
+      "step": 2,
+      "default": 40
+    },
+    {
+      "key": "fps",
+      "type": "slider",
+      "label": "Частота кадров (FPS)",
+      "min": 20,
+      "max": 60,
+      "step": 5,
+      "default": 30
+    }
+  ]
+}
