@@ -175,14 +175,16 @@ func snapshot() -> [String: Any] {
     let frontmostPid = NSWorkspace.shared.frontmostApplication?.processIdentifier
     let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
 
-    /// Окно занимает почти весь экран (≥80 % площади дисплея). Голая площадь не
-    /// работает: развёрнутые ОБЫЧНЫЕ окна (Hermes, Discord: 1470x923 при y=33 —
-    /// под меню-баром) дают ratio 0.97 и раньше стирали снег при каждом открытии
-    /// такого приложения. Полноэкранное окно отличается позицией:
-    ///   • перекрывает меню-бар (верхний зазор ≤5 px) — нативный fullscreen;
-    ///   • или заметно опущен верх (рамочный fullscreen Chrome: y=155);
-    ///   • или лежит вне дисплея — окно полноэкранного Space отдаётся с
-    ///     виртуальными координатами (x=1533, x=−1531).
+    /// Окно занимает почти весь экран (≥80 % площади дисплея). Пауза нужна на
+    /// ЛЮБОЕ окно, заполнившее экран, — и на нативный fullscreen, и на «окно
+    /// на весь экран» (рамочное/развёрнутое), по явной просьбе пользователя:
+    ///   • окно вне дисплея — полноэкранный Space отдаёт виртуальные координаты
+    ///     (x=1533, x=−1531); совпадение размеров ±10 %/±20 % отсеивает чужие;
+    ///   • верхний зазор ≤5 px — окно перекрыло меню-бар (нативный fullscreen);
+    ///   • окно ДОХОДИТ ДО НИЗА экрана (±20 px) — развёрнутое окно (Hermes,
+    ///     Discord: 1470x923 при y=33, ratio 0.97) или рамочный fullscreen
+    ///     (Chrome: 1470x801 при y=155). Раньше развёрнутые окна не паузили —
+    ///     пользователь считал это поломкой («снег идёт при окне на весь экран»).
     func coversDisplay(_ x: Double, _ y: Double, _ w: Double, _ h: Double) -> Bool {
         // мусорные размеры CGWindowList (окна-призраки с гигантскими bounds)
         guard w > 0, h > 0, w < 20000, h < 20000 else { return false }
@@ -193,13 +195,14 @@ func snapshot() -> [String: Any] {
                 && y >= display.minY - 50 && y + h <= display.maxY + 50
             if !onThisDisplay {
                 // окно этого размера вне дисплея — полноэкранный Space с виртуальными
-                // координатами; чужое окно соседнего дисплея отсеивается шириной ниже
+                // координатами; чужое окно соседнего дисплея отсеивается размерами ниже
                 if abs(w - display.width) <= display.width * 0.10,
                    abs(h - display.height) <= display.height * 0.20 { return true }
                 continue
             }
             let topGap = y - display.minY
-            if topGap <= 5 || topGap > 100 { return true }
+            let bottomFill = (y + h) >= display.maxY - 20
+            if topGap <= 5 || bottomFill { return true }
         }
         return false
     }
