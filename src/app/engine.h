@@ -22,6 +22,8 @@ struct LaunchOptions {
   bool noPersist = false;
   std::wstring telemetryPath; // per-frame CSV (window vs pile)
   std::wstring logPath;       // --log: append the log here instead of %LOCALAPPDATA%\DesktopSnow\logs
+  bool diagnostics = false;   // --diagnostics: log every pause decision every 0.5 s
+  int quitAfter = 0;          // --quit-after <s>: exit after this many seconds (0 = never)
   std::string syncOverride;   // "latch" | "vsync" | ""
   int predictOverride = -1;   // -1 = settings, 0 off, 1 on
   std::string predictorOverride;  // "linear" | "stepped" | ""
@@ -35,11 +37,13 @@ struct EngineConfig {
   bool remoteSession = false;   // RDP: cap fps, no busy-wait pacing
   bool reducedMotion = false;
   float night = 0;
-  std::vector<std::string> hiddenMonitors;  // monitors showing a fullscreen app
+  std::vector<std::string> hiddenMonitors;  // monitors showing a fullscreen app / maximised window, or switched off
   bool decorateMode = false;
   Tool activeTool = Tool::Tree;
   uint32_t hoverId = 0;
   Lang lang = Lang::En;
+  std::string diagText;   // pause decisions for the debug layer, one line per monitor
+  HWND keepAbove = nullptr;  // our settings window: overlays stay below it while it is topmost
 };
 
 enum class EngineCommand { ClearSnow, Santa, Train, Yeti, MonitorsChanged, ReassertTopmost };
@@ -72,6 +76,7 @@ class Engine {
   void GetDecorLayout(std::vector<DecorLayoutItem>& out);
   void TakeSnowmanUpdates(std::vector<SnowmanUpdate>& out);
   std::vector<HWND> OverlayWindows();
+  double Fps() const;  // overlay frame rate over the last second (0 before the first second)
 
   struct Impl;
 

@@ -1,9 +1,12 @@
 name: soak
 
-# Long resource run on demand (Actions -> soak -> Run workflow). Samples handles,
+# Long resource run on demand (Actions -> soak -> Run workflow, or a push to a
+# branch ending in "--soak"). Samples handles,
 # GDI/USER objects and memory of a running DesktopSnow.exe while windows open,
 # move and close around it, then prints the overlay's per-minute pacing lines.
 on:
+  push:
+    branches: ['**--soak']
   workflow_dispatch:
     inputs:
       minutes:

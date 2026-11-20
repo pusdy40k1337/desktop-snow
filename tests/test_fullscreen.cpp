@@ -79,8 +79,8 @@ TEST(fullscreen_ordinary_windows_are_not) {
   FsWindow max2 = Fw(kM2);
   max2.zoomed = max2.captioned = true;
   CHECK(!DetectFullscreen({Mon(kM2, kM2)}, {max2}, ShellNotifyState::Normal)[0]);
-  // One pixel short is not fullscreen without the shell's confirmation...
-  FsWindow almost = Fw(RectI(0, 0, 1920, 1079));
+  // A few pixels short is not fullscreen without the shell's confirmation...
+  FsWindow almost = Fw(RectI(0, 0, 1920, 1077));
   almost.foreground = true;
   CHECK(!DetectFullscreen({Mon(kM1, kW1)}, {almost}, ShellNotifyState::Normal)[0]);
   // ...but is when the shell reports a busy (fullscreen) foreground app.
@@ -127,6 +127,129 @@ TEST(fullscreen_shell_signals) {
   CHECK(r[0] && r[1]);
   r = DetectFullscreen({Mon(kM1, kW1), Mon(kM2, kM2)}, {}, ShellNotifyState::Presentation);
   CHECK(r[0] && r[1]);
+}
+
+// ---- pause decision: fullscreen + maximised ----------------------------------
+
+static PauseDecision Decide1(const std::vector<FsWindow>& ws, PauseOptions o = PauseOptions{}) {
+  return DecidePause({Mon(kM1, kW1)}, ws, ShellNotifyState::Normal, o)[0];
+}
+
+TEST(pause_maximized_window_on_top) {
+  FsWindow browser = Fw(kW1);  // maximised with the normal button: frame = work area, taskbar visible
+  browser.zoomed = browser.captioned = browser.foreground = true;
+  PauseDecision d = Decide1({browser});
+  CHECK(d.pause);
+  CHECK(d.reason == PauseReason::Maximized);
+  CHECK(d.window == 0);
+  CHECK(std::string(d.rule) == "maximized (zoomed)");
+  CHECK(std::string(PauseReasonName(d.reason)) == "maximized");
+  // The option switched off: still reported, but no pause.
+  PauseOptions off;
+  off.maximized = false;
+  d = Decide1({browser}, off);
+  CHECK(!d.pause);
+  CHECK(d.reason == PauseReason::Maximized);
+  // Windows 10 style: the DWM frame of a maximised window can stop a pixel short.
+  FsWindow dpi = Fw(RectI(0, 1, 1919, 1039));
+  dpi.zoomed = dpi.captioned = true;
+  CHECK(Decide1({dpi}).reason == PauseReason::Maximized);
+}
+
+TEST(pause_snapped_or_borderless_window_filling_the_work_area) {
+  FsWindow snapped = Fw(kW1);  // not zoomed, resized / snapped to the full work area
+  PauseDecision d = Decide1({snapped});
+  CHECK(d.pause && d.reason == PauseReason::Maximized);
+  CHECK(std::string(d.rule) == "covers the work area");
+  // Borderless maximised app: frame overhangs the work area by its resize border.
+  FsWindow borderless = Fw(RectI(-8, -8, 1928, 1048));
+  borderless.zoomed = true;
+  d = Decide1({borderless});
+  CHECK(d.pause && d.reason == PauseReason::Maximized);
+}
+
+TEST(pause_almost_the_work_area_does_not_pause) {
+  FsWindow almost = Fw(RectI(0, 0, 1920, 1030));  // 10 px short of the work area
+  PauseDecision d = Decide1({almost});
+  CHECK(!d.pause);
+  CHECK(d.reason == PauseReason::None);
+  CHECK(std::string(d.rule) == "top window does not cover");
+  FsWindow narrow = Fw(RectI(6, 0, 1920, 1040));  // 6 px short at the left edge
+  CHECK(!Decide1({narrow}).pause);
+  // And it hides a maximised window below it: the user works in the top one.
+  FsWindow below = Fw(kW1);
+  below.zoomed = below.captioned = true;
+  CHECK(!Decide1({almost, below}).pause);
+  CHECK(std::string(Decide1({}).rule) == "no window");
+  CHECK(std::string(PauseReasonName(PauseReason::None)) == "none");
+}
+
+TEST(pause_fullscreen_within_tolerance) {
+  // Borderless fullscreen a pixel or two short of the monitor (125 %/150 % rounding).
+  FsWindow fs = Fw(RectI(1, 0, 1920, 1078));
+  PauseDecision d = Decide1({fs});
+  CHECK(d.pause && d.reason == PauseReason::Fullscreen);
+  CHECK(std::string(d.rule) == "covers the monitor");
+  CHECK(std::string(PauseReasonName(d.reason)) == "fullscreen");
+  // Fullscreen pause off: no pause even though it is reported.
+  PauseOptions off;
+  off.fullscreen = false;
+  d = Decide1({fs}, off);
+  CHECK(!d.pause && d.reason == PauseReason::Fullscreen);
+  // F11 browser that was maximised: no caption any more, covers the monitor.
+  FsWindow f11 = Fw(kM1);
+  f11.zoomed = true;
+  CHECK(Decide1({f11}).reason == PauseReason::Fullscreen);
+}
+
+TEST(pause_topmost_fullscreen_window) {
+  FsWindow player = Fw(kM1);  // "always on top" video player in fullscreen
+  player.topmost = true;
+  FsWindow editor = Fw(RectI(100, 100, 900, 700));
+  PauseDecision d = Decide1({player, editor});
+  CHECK(d.pause && d.reason == PauseReason::Fullscreen && d.window == 0);
+  // Topmost maximised window (Task Manager "always on top", maximised).
+  FsWindow tm = Fw(kW1);
+  tm.topmost = tm.zoomed = tm.captioned = true;
+  CHECK(Decide1({tm, editor}).reason == PauseReason::Maximized);
+}
+
+TEST(pause_second_monitor_with_other_dpi) {
+  // Monitor 2: 2560x1440 at 150 %, right of monitor 1, its own taskbar.
+  const RectI m2(1920, 0, 4480, 1440), w2(1920, 0, 4480, 1392);
+  std::vector<FsMonitor> mons = {Mon(kM1, kW1), Mon(m2, w2)};
+  FsWindow video = Fw(RectI(1921, 0, 4479, 1439));  // fullscreen video, 1 px short on each side
+  FsWindow editor = Fw(RectI(100, 100, 1500, 900));
+  editor.foreground = true;
+  auto d = DecidePause(mons, {editor, video}, ShellNotifyState::Normal, PauseOptions{});
+  CHECK(!d[0].pause && d[0].reason == PauseReason::None);
+  CHECK(d[1].pause && d[1].reason == PauseReason::Fullscreen && d[1].window == 1);
+  // Maximised browser on monitor 2 only.
+  FsWindow browser = Fw(w2);
+  browser.zoomed = browser.captioned = true;
+  d = DecidePause(mons, {browser, editor}, ShellNotifyState::Normal, PauseOptions{});
+  CHECK(!d[0].pause);
+  CHECK(d[1].pause && d[1].reason == PauseReason::Maximized);
+}
+
+TEST(pause_spill_onto_neighbour_monitor_is_ignored) {
+  // A borderless maximised window on monitor 1 overhangs 8 px onto monitor 2,
+  // where a fullscreen video plays below it in z-order.
+  FsWindow spill = Fw(RectI(-8, -8, 1928, 1048));
+  spill.zoomed = true;
+  FsWindow video = Fw(kM2);
+  auto d = DecidePause({Mon(kM1, kW1), Mon(kM2, kM2)}, {spill, video}, ShellNotifyState::Normal, PauseOptions{});
+  CHECK(d[0].reason == PauseReason::Maximized);
+  CHECK(d[1].reason == PauseReason::Fullscreen && d[1].window == 1);
+}
+
+TEST(pause_shell_states_name_their_rule) {
+  auto d = DecidePause({Mon(kM1, kW1)}, {}, ShellNotifyState::Presentation, PauseOptions{});
+  CHECK(d[0].pause && std::string(d[0].rule) == "shell: presentation mode");
+  FsWindow game = Fw(kM1);
+  game.foreground = true;
+  d = DecidePause({Mon(kM1, kW1)}, {game}, ShellNotifyState::D3DFullscreen, PauseOptions{});
+  CHECK(d[0].pause && d[0].window == 0 && std::string(d[0].rule) == "shell: exclusive fullscreen (D3D)");
 }
 
 TEST(fullscreen_debounce) {
@@ -204,6 +327,45 @@ TEST(world_paused_monitor_spawns_nothing_and_freezes) {
   for (const auto& p : w.particles())
     if (p.monitor == 0 && p.kind != ParticleKind::Debris && k < after.size()) moved = moved || p.y != after[k++].y;
   CHECK(moved);
+}
+
+TEST(world_monitor_unplug_and_replug) {
+  MonitorInfo a, b;
+  a.id = "A";
+  a.rect = RectI(0, 0, 1920, 1080);
+  a.work = RectI(0, 0, 1920, 1040);
+  b.id = "B";
+  b.rect = RectI(1920, 0, 4480, 1440);  // larger, other DPI
+  b.work = RectI(1920, 0, 4480, 1392);
+  b.scale = 1.5f;
+  World w;
+  SimSettings s;
+  s.windGusts = s.sparkle = s.cursorSweep = false;
+  w.configure(s);
+  w.setMonitors({a, b});
+  w.setPausedMonitors({0, 0});
+  std::vector<WindowInput> none;
+  double t = 0;
+  for (int i = 0; i < 120; ++i) w.update(t += 1.0 / 60, 1.f / 60, none);
+  auto countOn = [&](int mon) {
+    int n = 0;
+    for (const auto& p : w.particles())
+      if (p.kind != ParticleKind::Debris && p.monitor == mon) ++n;
+    return n;
+  };
+  CHECK(countOn(1) > 100);
+  // Unplug B (the pause vector still has two entries until the app catches up).
+  w.setMonitors({a});
+  for (int i = 0; i < 60; ++i) w.update(t += 1.0 / 60, 1.f / 60, none);
+  bool valid = true;
+  for (const auto& p : w.particles()) valid = valid && p.monitor < 1;
+  CHECK(valid);
+  CHECK(countOn(0) > 100);
+  // Plug it back in: it snows there again.
+  w.setMonitors({a, b});
+  w.setPausedMonitors({0, 0});
+  for (int i = 0; i < 120; ++i) w.update(t += 1.0 / 60, 1.f / 60, none);
+  CHECK(countOn(1) > 100);
 }
 
 TEST(settings_pause_fullscreen_roundtrip) {

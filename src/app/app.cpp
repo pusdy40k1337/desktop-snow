@@ -11,9 +11,13 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdarg>
+#include <cstdio>
 #include <ctime>
+#include <fstream>
 
 #include "../core/theme.h"
+#include "../core/ui_strings.h"
 
 namespace snow::win {
 
@@ -21,45 +25,15 @@ namespace {
 
 enum : UINT {
   ID_ENABLED = 100,
-  ID_INT_LIGHT,
-  ID_INT_NORMAL,
-  ID_INT_HEAVY,
-  ID_INT_BLIZZARD,
-  ID_EFF_SNOW = 120,
-  ID_EFF_CONFETTI,
-  ID_EFF_NONE,
-  ID_THEME_BASE = 140,
-  ID_Q_PILES = 160,
-  ID_Q_TASKBAR,
-  ID_Q_WIND,
-  ID_Q_CURSOR,
-  ID_Q_SPARKLE,
-  ID_Q_MELT,
-  ID_Q_DAYNIGHT,
-  ID_Q_REDUCED,
-  ID_Q_BATTERY,
-  ID_Q_VISITORS,
-  ID_DECORATE = 180,
-  ID_SANTA,
-  ID_TRAIN,
-  ID_YETI,
-  ID_CLEAR_SNOW,
-  ID_CLEAR_DECOR,
-  ID_LANG_AUTO = 200,
-  ID_LANG_EN,
-  ID_LANG_RU,
-  ID_LANG_UK,
-  ID_STARTUP = 210,
-  ID_DEBUG,
-  ID_OPEN_FOLDER,
+  ID_SETTINGS,
+  ID_PAUSE_HOUR,
   ID_QUIT,
-  ID_PAUSE_FULLSCREEN,
 };
 
-enum : UINT_PTR { T_FULLSCREEN = 1, T_SAVE, T_MONITORS, T_SLOW, T_TOPMOST, T_QUIT_AFTER, T_FS_DEBOUNCE };
+enum : UINT_PTR { T_FULLSCREEN = 1, T_SAVE, T_MONITORS, T_SLOW, T_TOPMOST, T_QUIT_AFTER, T_FS_DEBOUNCE, T_PAUSE_HOUR };
 constexpr UINT HK_TOGGLE = 1, HK_DECORATE = 2;
 constexpr UINT WM_APP_SECOND_INSTANCE = WM_APP + 10;
-const int kIntensities[4] = {50, 100, 150, 200};
+constexpr size_t kDiagHistory = 200;  // decision changes kept for "Copy diagnostics"
 
 App* g_app = nullptr;
 
@@ -69,6 +43,26 @@ const GUID kAcDc = {0x5d3e9a59, 0xe9d5, 0x4b00, {0xa6, 0xbd, 0xff, 0x34, 0xff, 0
 const GUID kDisplayState = {0x6fe69556, 0x704a, 0x47a0, {0x8f, 0x24, 0xc2, 0x8d, 0x93, 0x6f, 0xda, 0x47}};
 
 std::wstring W(const char* s) { return Widen(s); }
+std::wstring W(UiStr s, Lang l) { return Widen(UiTr(s, l)); }
+
+std::string Fmt(const char* fmt, ...) {
+  char buf[2048];
+  va_list ap;
+  va_start(ap, fmt);
+  vsnprintf(buf, sizeof(buf), fmt, ap);
+  va_end(ap);
+  return buf;
+}
+
+std::string RectText(const RectI& r) { return Fmt("%d,%d,%d,%d", r.left, r.top, r.right, r.bottom); }
+
+std::string LocalTimeText(bool withDate) {
+  SYSTEMTIME st;
+  GetLocalTime(&st);
+  if (withDate)
+    return Fmt("%04u-%02u-%02u %02u:%02u:%02u", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+  return Fmt("%02u:%02u:%02u.%03u", st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
+}
 
 }  // namespace
 
@@ -103,6 +97,7 @@ void App::SaveNow() {
 
 void App::RefreshSystemState() {
   PowerState p = QueryPower();
+  onBattery_ = p.onBattery;
   battery_ = state_.settings.batterySaver && (p.onBattery || p.saver);
   remote_ = GetSystemMetrics(SM_REMOTESESSION) != 0;
   const std::string& rm = state_.settings.reducedMotion;
@@ -117,16 +112,27 @@ void App::RefreshSystemState() {
 void App::PushConfig() {
   EngineConfig cfg;
   cfg.settings = state_.settings;
-  cfg.paused = !state_.settings.enabled || systemPaused_ || displayOff_;
+  cfg.paused = !state_.settings.enabled || systemPaused_ || displayOff_ || pauseUntil_ > 0 ||
+               (state_.settings.pauseOnBattery && onBattery_);
   cfg.batteryMode = battery_;
   cfg.remoteSession = remote_;
   cfg.reducedMotion = reduced_;
   cfg.night = night_;
   cfg.hiddenMonitors = hiddenMonitors_;
+  for (const auto& id : state_.settings.disabledMonitors)
+    if (std::find(cfg.hiddenMonitors.begin(), cfg.hiddenMonitors.end(), id) == cfg.hiddenMonitors.end())
+      cfg.hiddenMonitors.push_back(id);
   cfg.decorateMode = decorate_;
   cfg.activeTool = tool_;
   cfg.hoverId = hoverId_;
   cfg.lang = lang_;
+  cfg.keepAbove = settingsWnd_.Hwnd();
+  for (const auto& d : diag_) {
+    cfg.diagText += Fmt("%s: %s - %s%s%s\n", d.id.c_str(), d.decision.pause ? "PAUSED" : "snowing",
+                        PauseReasonName(d.decision.reason), d.exe.empty() ? "" : ", ", d.exe.c_str());
+    cfg.diagText += Fmt("  rule: %s\n", d.decision.rule);
+  }
+  if (!diagShell_.empty()) cfg.diagText += "shell: " + diagShell_ + "\n";
   if (opts_.harness) {
     cfg.paused = false;
     cfg.hiddenMonitors.clear();
@@ -138,9 +144,22 @@ void App::PushDecor() { engine_.SetDecor(state_.decor); }
 
 namespace {
 
-ShellNotifyState QueryShellState() {
+ShellNotifyState QueryShellState(std::string& text) {
   QUERY_USER_NOTIFICATION_STATE q{};
-  if (FAILED(SHQueryUserNotificationState(&q))) return ShellNotifyState::Unknown;
+  if (FAILED(SHQueryUserNotificationState(&q))) {
+    text = "query failed";
+    return ShellNotifyState::Unknown;
+  }
+  static const char* kNames[] = {"?",
+                                 "QUNS_NOT_PRESENT",
+                                 "QUNS_BUSY",
+                                 "QUNS_RUNNING_D3D_FULL_SCREEN",
+                                 "QUNS_PRESENTATION_MODE",
+                                 "QUNS_ACCEPTS_NOTIFICATIONS",
+                                 "QUNS_QUIET_TIME",
+                                 "QUNS_APP"};
+  int v = static_cast<int>(q);
+  text = Fmt("%s(%d)", v >= 1 && v <= 7 ? kNames[v] : "?", v);
   switch (q) {
     case QUNS_BUSY: return ShellNotifyState::Busy;
     case QUNS_RUNNING_D3D_FULL_SCREEN: return ShellNotifyState::D3DFullscreen;
@@ -149,13 +168,34 @@ ShellNotifyState QueryShellState() {
   }
 }
 
-// Top-level windows that could be a fullscreen app, in z-order (topmost first).
-std::vector<FsWindow> FullscreenCandidates() {
+std::string DescribeWindow(HWND h, const RECT* frame = nullptr) {
+  if (!h) return "none";
+  DWORD pid = 0;
+  GetWindowThreadProcessId(h, &pid);
+  RECT r{};
+  if (frame) r = *frame;
+  else GetFrameBounds(h, r);
+  LONG style = GetWindowLongW(h, GWL_STYLE), ex = GetWindowLongW(h, GWL_EXSTYLE);
+  return Fmt("0x%08llX class=\"%s\" exe=%s frame=%s zoomed=%d caption=%d topmost=%d floating=%d",
+             static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(h)), WindowClass(h).c_str(),
+             ProcessName(pid).c_str(), RectText(RectI(r.left, r.top, r.right, r.bottom)).c_str(), IsZoomed(h) ? 1 : 0,
+             (style & WS_CAPTION) == WS_CAPTION ? 1 : 0, (ex & WS_EX_TOPMOST) ? 1 : 0,
+             ((ex & WS_EX_TOOLWINDOW) || GetWindow(h, GW_OWNER)) ? 1 : 0);
+}
+
+// Top-level windows that could be a fullscreen app or a maximised window, in
+// z-order (topmost first); `hwnds` gets the matching handles. Our own windows
+// are skipped except `ownAllowed` (the settings window: while it is on top
+// the user wants to see the snow they are adjusting).
+std::vector<FsWindow> FullscreenCandidates(std::vector<HWND>& hwnds, HWND ownAllowed) {
   struct Ctx {
     std::vector<FsWindow> out;
+    std::vector<HWND>* hwnds;
     HWND fgRoot;
+    HWND ownAllowed;
     DWORD ownPid;
-  } ctx{{}, nullptr, GetCurrentProcessId()};
+  } ctx{{}, &hwnds, nullptr, ownAllowed, GetCurrentProcessId()};
+  hwnds.clear();
   HWND fg = GetForegroundWindow();
   ctx.fgRoot = fg ? GetAncestor(fg, GA_ROOT) : nullptr;
   EnumWindows(
@@ -164,7 +204,7 @@ std::vector<FsWindow> FullscreenCandidates() {
         if (!IsWindowVisible(h) || IsIconic(h)) return TRUE;
         DWORD pid = 0;
         GetWindowThreadProcessId(h, &pid);
-        if (pid == c->ownPid || IsCloaked(h)) return TRUE;
+        if ((pid == c->ownPid && h != c->ownAllowed) || IsCloaked(h)) return TRUE;
         LONG style = GetWindowLongW(h, GWL_STYLE), ex = GetWindowLongW(h, GWL_EXSTYLE);
         if (style & WS_CHILD) return TRUE;
         if ((ex & WS_EX_TRANSPARENT) && (ex & WS_EX_LAYERED)) return TRUE;  // click-through overlays (GPU overlays...)
@@ -185,6 +225,7 @@ std::vector<FsWindow> FullscreenCandidates() {
         w.floating = (ex & WS_EX_TOOLWINDOW) != 0 || GetWindow(h, GW_OWNER) != nullptr;
         w.foreground = h == c->fgRoot;
         c->out.push_back(w);
+        c->hwnds->push_back(h);
         return TRUE;
       },
       reinterpret_cast<LPARAM>(&ctx));
@@ -195,18 +236,53 @@ std::vector<FsWindow> FullscreenCandidates() {
 
 void App::CheckFullscreen(bool immediate) {
   if (opts_.harness) return;
+  // Always decided (cheap) so diagnostics and the settings window can explain
+  // the state even when both pauses are switched off.
+  std::vector<MonitorHandle> mons = EnumerateMonitors();
+  std::vector<FsMonitor> fm;
+  for (const auto& m : mons) fm.push_back(FsMonitor{m.info.rect, m.info.work});
+  ShellNotifyState shell = QueryShellState(diagShell_);
+  std::vector<HWND> hwnds;
+  std::vector<FsWindow> wins = FullscreenCandidates(hwnds, settingsWnd_.Hwnd());
+  PauseOptions po;
+  po.fullscreen = state_.settings.pauseFullscreen;
+  po.maximized = state_.settings.pauseMaximized;
+  std::vector<PauseDecision> dec = DecidePause(fm, wins, shell, po);
+
   std::vector<std::string> raw;
-  ShellNotifyState shell = ShellNotifyState::Unknown;
-  if (state_.settings.pauseFullscreen) {
-    std::vector<MonitorHandle> mons = EnumerateMonitors();
-    std::vector<FsMonitor> fm;
-    for (const auto& m : mons) fm.push_back(FsMonitor{m.info.rect, m.info.work});
-    shell = QueryShellState();
-    std::vector<bool> fs = DetectFullscreen(fm, FullscreenCandidates(), shell);
-    for (size_t i = 0; i < mons.size(); ++i)
-      if (fs[i]) raw.push_back(mons[i].info.id);
-    std::sort(raw.begin(), raw.end());
+  std::vector<MonitorDiag> diag;
+  std::string key;
+  for (size_t i = 0; i < mons.size(); ++i) {
+    if (dec[i].pause) raw.push_back(mons[i].info.id);
+    MonitorDiag d;
+    d.id = mons[i].info.id;
+    d.rect = mons[i].info.rect;
+    d.work = mons[i].info.work;
+    d.scale = mons[i].info.scale;
+    d.primary = mons[i].info.primary;
+    d.decision = dec[i];
+    if (dec[i].window >= 0 && static_cast<size_t>(dec[i].window) < hwnds.size()) {
+      HWND h = hwnds[static_cast<size_t>(dec[i].window)];
+      DWORD pid = 0;
+      GetWindowThreadProcessId(h, &pid);
+      d.exe = ProcessName(pid);
+      d.window = DescribeWindow(h);
+    }
+    key += d.id + "=" + PauseReasonName(d.decision.reason) + (d.decision.pause ? "+" : "-") + d.exe + "/" +
+           d.decision.rule + ";";
+    diag.push_back(std::move(d));
   }
+  diag_ = std::move(diag);
+  HWND fg = GetForegroundWindow();
+  diagFg_ = DescribeWindow(fg ? GetAncestor(fg, GA_ROOT) : nullptr);
+  bool diagChanged = key != diagLastKey_;
+  if (diagChanged) {
+    diagLastKey_ = key;
+    for (const std::string& line : DiagnosticsLines()) diagHistory_.push_back(LocalTimeText(false) + " " + line);
+    while (diagHistory_.size() > kDiagHistory) diagHistory_.pop_front();
+  }
+  std::sort(raw.begin(), raw.end());
+
   bool changed;
   if (immediate) {
     changed = raw != fsDebounce_.applied();
@@ -217,13 +293,99 @@ void App::CheckFullscreen(bool immediate) {
   double due = fsDebounce_.pendingIn(Now());
   if (due >= 0) SetTimer(hwnd_, T_FS_DEBOUNCE, static_cast<UINT>(due * 1000.0) + 15, nullptr);
   else KillTimer(hwnd_, T_FS_DEBOUNCE);
-  if (!changed) return;
+  if (!changed) {
+    if (diagChanged && state_.settings.debugOverlay) PushConfig();  // debug layer shows the decision
+    return;
+  }
   hiddenMonitors_ = fsDebounce_.applied();
   std::string list;
-  for (const auto& id : hiddenMonitors_) list += (list.empty() ? "" : ", ") + id;
-  Log("fullscreen: %zu monitor(s) paused%s%s (shell state %d)", hiddenMonitors_.size(), list.empty() ? "" : ": ",
-      list.c_str(), static_cast<int>(shell));
+  for (const auto& d : diag_)
+    if (std::find(hiddenMonitors_.begin(), hiddenMonitors_.end(), d.id) != hiddenMonitors_.end())
+      list += (list.empty() ? "" : ", ") + d.id + " (" + PauseReasonName(d.decision.reason) +
+              (d.exe.empty() ? "" : ", " + d.exe) + ")";
+  Log("fullscreen: %zu monitor(s) paused%s%s (shell %s)", hiddenMonitors_.size(), list.empty() ? "" : ": ",
+      list.c_str(), diagShell_.c_str());
   PushConfig();
+}
+
+std::vector<std::string> App::DiagnosticsLines() const {
+  std::vector<std::string> out;
+  for (const auto& d : diag_) {
+    bool applied = std::find(hiddenMonitors_.begin(), hiddenMonitors_.end(), d.id) != hiddenMonitors_.end();
+    out.push_back(Fmt("mon=%s rect=%s work=%s scale=%.2f decision=%s pause=%s applied=%s rule=\"%s\" window=%s | "
+                      "fg=%s | shell=%s",
+                      d.id.c_str(), RectText(d.rect).c_str(), RectText(d.work).c_str(), static_cast<double>(d.scale),
+                      PauseReasonName(d.decision.reason), d.decision.pause ? "yes" : "no",
+                      applied ? "hidden" : "shown", d.decision.rule, d.window.empty() ? "none" : d.window.c_str(),
+                      diagFg_.c_str(), diagShell_.c_str()));
+  }
+  return out;
+}
+
+std::string App::DiagnosticsReport() const {
+  const Settings& s = state_.settings;
+  std::string r = "Desktop Snow diagnostics\r\n========================\r\n";
+  r += Fmt("Build: %s   Windows build: %lu   Time: %s\r\n", SNOW_BUILD_ID, OsBuild(), LocalTimeText(true).c_str());
+  std::string off;
+  for (const auto& id : s.disabledMonitors) off += (off.empty() ? "" : ",") + id;
+  r += Fmt("Settings: enabled=%d pauseFullscreen=%d pauseMaximized=%d pauseOnBattery=%d batterySaver=%d "
+           "snowOnTaskbar=%d debugOverlay=%d disabledMonitors=[%s]\r\n",
+           s.enabled, s.pauseFullscreen, s.pauseMaximized, s.pauseOnBattery, s.batterySaver, s.piles.onTaskbar,
+           s.debugOverlay, off.c_str());
+  r += Fmt("State: systemPaused=%d displayOff=%d pausedForHour=%d onBattery=%d remote=%d decorate=%d\r\n",
+           systemPaused_, displayOff_, pauseUntil_ > 0, onBattery_, remote_, decorate_);
+  r += "\r\nCurrent pause decision per monitor:\r\n";
+  for (const std::string& line : DiagnosticsLines()) r += "  " + line + "\r\n";
+  r += "\r\nTop-level windows in z-order (first 20 candidates):\r\n";
+  std::vector<HWND> hwnds;
+  std::vector<FsWindow> wins = FullscreenCandidates(hwnds, settingsWnd_.Hwnd());
+  for (size_t i = 0; i < hwnds.size() && i < 20; ++i) {
+    RECT fr{wins[i].frame.left, wins[i].frame.top, wins[i].frame.right, wins[i].frame.bottom};
+    r += Fmt("  %2zu %s%s\r\n", i, DescribeWindow(hwnds[i], &fr).c_str(), wins[i].foreground ? " foreground" : "");
+  }
+  r += "\r\nRecent decision changes (newest last):\r\n";
+  for (const std::string& line : diagHistory_) r += "  " + line + "\r\n";
+  return r;
+}
+
+void App::CopyDiagnostics() {
+  std::wstring text = Widen(DiagnosticsReport());
+  bool ok = false;
+  if (OpenClipboard(hwnd_)) {
+    EmptyClipboard();
+    size_t bytes = (text.size() + 1) * sizeof(wchar_t);
+    HGLOBAL mem = GlobalAlloc(GMEM_MOVEABLE, bytes);
+    if (mem) {
+      if (void* p = GlobalLock(mem)) {
+        memcpy(p, text.c_str(), bytes);
+        GlobalUnlock(mem);
+        ok = SetClipboardData(CF_UNICODETEXT, mem) != nullptr;
+      }
+      if (!ok) GlobalFree(mem);
+    }
+    CloseClipboard();
+  }
+  Log("diagnostics: copied to clipboard (%s)", ok ? "ok" : "FAILED");
+  Balloon(ok ? UiTr(UiStr::DiagCopied, lang_) : UiTr(UiStr::DiagSaveFailed, lang_));
+}
+
+void App::SaveDiagnostics() {
+  SYSTEMTIME st;
+  GetLocalTime(&st);
+  wchar_t name[64];
+  swprintf(name, 64, L"\\diagnostics-%04u%02u%02u-%02u%02u%02u.txt", st.wYear, st.wMonth, st.wDay, st.wHour,
+           st.wMinute, st.wSecond);
+  std::wstring path = LogDir() + name;
+  std::string text = DiagnosticsReport();
+  bool ok = WriteTextFile(std::filesystem::path(path), text);
+  Log("diagnostics: saved to %s (%s)", Narrow(path).c_str(), ok ? "ok" : "FAILED");
+  if (!ok) {
+    Balloon(UiTr(UiStr::DiagSaveFailed, lang_));
+    return;
+  }
+  std::wstring args = L"/select,\"" + path + L"\"";
+  ShellExecuteW(nullptr, L"open", L"explorer.exe", args.c_str(), nullptr, SW_SHOWNORMAL);
+  Balloon(std::string(UiTr(UiStr::DiagSaved, lang_)) + " " + Narrow(path));
 }
 
 void App::RegisterHotkeys() {
@@ -360,77 +522,21 @@ void App::Balloon(const std::string& text) {
 
 void App::ShowMenu(POINT pt) {
   const Settings& s = state_.settings;
-  auto item = [](HMENU m, UINT id, const std::wstring& text, bool checked, bool radio = false, bool enabled = true) {
+  auto item = [](HMENU m, UINT id, const std::wstring& text, bool checked, bool isDefault = false) {
     MENUITEMINFOW mi{};
     mi.cbSize = sizeof(mi);
     mi.fMask = MIIM_ID | MIIM_STRING | MIIM_STATE | MIIM_FTYPE;
-    mi.fType = MFT_STRING | (radio ? MFT_RADIOCHECK : 0);
-    mi.fState = (checked ? MFS_CHECKED : 0) | (enabled ? 0 : MFS_DISABLED);
+    mi.fType = MFT_STRING;
+    mi.fState = (checked ? MFS_CHECKED : 0) | (isDefault ? MFS_DEFAULT : 0);
     mi.wID = id;
     mi.dwTypeData = const_cast<wchar_t*>(text.c_str());
     InsertMenuItemW(m, GetMenuItemCount(m), TRUE, &mi);
   };
-  auto sub = [](HMENU m, HMENU child, const std::wstring& text) {
-    AppendMenuW(m, MF_POPUP | MF_STRING, reinterpret_cast<UINT_PTR>(child), text.c_str());
-  };
   HMENU menu = CreatePopupMenu();
-  item(menu, 0, W(T(Str::AppName)) + L" \x2014 " + W(T(Str::Tagline)), false, false, false);
-  AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
   item(menu, ID_ENABLED, W(T(Str::MenuEnabled)) + L"\t" + Widen(s.hotkeyToggle), s.enabled);
-  item(menu, ID_PAUSE_FULLSCREEN, W(T(Str::MenuPauseFullscreen)), s.pauseFullscreen);
-  item(menu, ID_Q_TASKBAR, W(T(Str::QuickTaskbarPile)), s.piles.onTaskbar);
-
-  HMENU inten = CreatePopupMenu();
-  const Str names[4] = {Str::MenuIntensityLight, Str::MenuIntensityNormal, Str::MenuIntensityHeavy,
-                        Str::MenuIntensityBlizzard};
-  for (int i = 0; i < 4; ++i) item(inten, ID_INT_LIGHT + i, W(T(names[i])), s.intensity == kIntensities[i], true);
-  sub(menu, inten, W(T(Str::MenuIntensity)));
-
-  HMENU eff = CreatePopupMenu();
-  item(eff, ID_EFF_SNOW, W(T(Str::EffectSnow)), s.effect == "snow", true);
-  item(eff, ID_EFF_CONFETTI, W(T(Str::EffectConfetti)), s.effect == "confetti", true);
-  item(eff, ID_EFF_NONE, W(T(Str::EffectNone)), s.effect == "none", true);
-  sub(menu, eff, W(T(Str::MenuEffect)));
-
-  HMENU theme = CreatePopupMenu();
-  const Str themeNames[4] = {Str::ThemeClassic, Str::ThemeFrost, Str::ThemeCandy, Str::ThemeGolden};
-  const auto& ids = ThemeIds();
-  for (size_t i = 0; i < ids.size() && i < 4; ++i)
-    item(theme, ID_THEME_BASE + static_cast<UINT>(i), W(T(themeNames[i])), s.theme == ids[i], true);
-  sub(menu, theme, W(T(Str::MenuTheme)));
-
-  HMENU quick = CreatePopupMenu();
-  item(quick, ID_Q_PILES, W(T(Str::QuickPiles)), s.piles.enabled);
-  item(quick, ID_Q_WIND, W(T(Str::QuickWind)), s.extras.windGusts);
-  item(quick, ID_Q_CURSOR, W(T(Str::QuickCursorSweep)), s.extras.cursorSweep);
-  item(quick, ID_Q_SPARKLE, W(T(Str::QuickSparkle)), s.extras.sparkle);
-  item(quick, ID_Q_MELT, W(T(Str::QuickMelt)), s.extras.melt);
-  item(quick, ID_Q_DAYNIGHT, W(T(Str::QuickDayNight)), s.extras.dayNightTint);
-  item(quick, ID_Q_REDUCED, W(T(Str::QuickReducedMotion)), reduced_);
-  item(quick, ID_Q_BATTERY, W(T(Str::QuickBatterySaver)), s.batterySaver);
-  item(quick, ID_Q_VISITORS, W(T(Str::QuickVisitors)), s.extras.santa || s.extras.train || s.extras.yeti);
-  sub(menu, quick, W(T(Str::MenuQuick)));
-
-  item(menu, ID_DECORATE, W(T(Str::MenuDecorate)) + L"\t" + Widen(s.hotkeyDecorate), decorate_);
-  HMENU surprise = CreatePopupMenu();
-  item(surprise, ID_SANTA, W(T(Str::VisitorSanta)), false);
-  item(surprise, ID_TRAIN, W(T(Str::VisitorTrain)), false);
-  item(surprise, ID_YETI, W(T(Str::VisitorYeti)), false, false, !state_.decor.snowmen.empty());
-  sub(menu, surprise, W(T(Str::MenuSurprise)));
-  item(menu, ID_CLEAR_SNOW, W(T(Str::MenuClearSnow)), false);
-  item(menu, ID_CLEAR_DECOR, W(T(Str::MenuClearDecorations)), false, false,
-       !state_.decor.trees.empty() || !state_.decor.snowmen.empty());
-  AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-
-  HMENU langM = CreatePopupMenu();
-  item(langM, ID_LANG_AUTO, W(T(Str::LangAuto)), s.language == "auto", true);
-  item(langM, ID_LANG_EN, L"English", s.language == "en", true);
-  item(langM, ID_LANG_RU, L"\x0420\x0443\x0441\x0441\x043A\x0438\x0439", s.language == "ru", true);
-  item(langM, ID_LANG_UK, L"\x0423\x043A\x0440\x0430\x0457\x043D\x0441\x044C\x043A\x0430", s.language == "uk", true);
-  sub(menu, langM, W(T(Str::MenuLanguage)));
-  item(menu, ID_STARTUP, W(T(Str::MenuStartup)), s.launchAtStartup);
-  item(menu, ID_DEBUG, W(T(Str::MenuDebug)), s.debugOverlay);
-  item(menu, ID_OPEN_FOLDER, W(T(Str::MenuOpenFolder)), false);
+  item(menu, ID_SETTINGS, W(UiStr::TraySettings, lang_), false, true);
+  bool paused = pauseUntil_ > 0;
+  item(menu, ID_PAUSE_HOUR, W(paused ? UiStr::TrayResume : UiStr::TrayPauseHour, lang_), false);
   AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
   item(menu, ID_QUIT, W(T(Str::MenuQuit)), false);
 
@@ -440,75 +546,144 @@ void App::ShowMenu(POINT pt) {
   flags |= GetSystemMetrics(SM_MENUDROPALIGNMENT) ? TPM_RIGHTALIGN : TPM_LEFTALIGN;
   UINT cmd = TrackPopupMenuEx(menu, flags, pt.x, pt.y, hwnd_, nullptr);
   PostMessageW(hwnd_, WM_NULL, 0, 0);
-  DestroyMenu(menu);  // destroys submenus too
+  DestroyMenu(menu);
   if (cmd) OnCommand(cmd);
 }
 
 void App::OnCommand(UINT id) {
-  Settings& s = state_.settings;
-  bool save = true;
   switch (id) {
-    case ID_ENABLED: s.enabled = !s.enabled; break;
-    case ID_PAUSE_FULLSCREEN: s.pauseFullscreen = !s.pauseFullscreen; break;
-    case ID_INT_LIGHT:
-    case ID_INT_NORMAL:
-    case ID_INT_HEAVY:
-    case ID_INT_BLIZZARD: s.intensity = kIntensities[id - ID_INT_LIGHT]; break;
-    case ID_EFF_SNOW: s.effect = "snow"; break;
-    case ID_EFF_CONFETTI: s.effect = "confetti"; break;
-    case ID_EFF_NONE: s.effect = "none"; break;
-    case ID_Q_PILES: s.piles.enabled = !s.piles.enabled; break;
-    case ID_Q_TASKBAR: s.piles.onTaskbar = !s.piles.onTaskbar; break;
-    case ID_Q_WIND: s.extras.windGusts = !s.extras.windGusts; break;
-    case ID_Q_CURSOR: s.extras.cursorSweep = !s.extras.cursorSweep; break;
-    case ID_Q_SPARKLE: s.extras.sparkle = !s.extras.sparkle; break;
-    case ID_Q_MELT: s.extras.melt = !s.extras.melt; break;
-    case ID_Q_DAYNIGHT: s.extras.dayNightTint = !s.extras.dayNightTint; break;
-    case ID_Q_REDUCED: s.reducedMotion = reduced_ ? "off" : "on"; break;
-    case ID_Q_BATTERY: s.batterySaver = !s.batterySaver; break;
-    case ID_Q_VISITORS: {
-      bool on = !(s.extras.santa || s.extras.train || s.extras.yeti);
-      s.extras.santa = s.extras.train = s.extras.yeti = on;
+    case ID_ENABLED: {
+      Settings s = state_.settings;
+      s.enabled = !s.enabled;
+      ApplySettings(s);
       break;
     }
-    case ID_DECORATE:
-      save = false;
-      decorate_ ? ExitDecorate() : EnterDecorate();
+    case ID_SETTINGS: settingsWnd_.Show(); break;
+    case ID_PAUSE_HOUR: SetPauseHour(pauseUntil_ <= 0); break;
+    case ID_QUIT: DestroyWindow(hwnd_); break;
+  }
+}
+
+void App::SetPauseHour(bool on) {
+  pauseUntil_ = on ? Now() + 3600.0 : 0;
+  if (on) SetTimer(hwnd_, T_PAUSE_HOUR, 3600 * 1000, nullptr);
+  else KillTimer(hwnd_, T_PAUSE_HOUR);
+  Log("pause for 1 hour: %s", on ? "on" : "off");
+  PushConfig();
+  if (settingsWnd_.IsOpen()) settingsWnd_.Refresh();
+}
+
+// --------------------------------------------------------- settings window
+
+void App::InitSettingsWindow() {
+  SettingsHost host;
+  host.get = [this] { return state_.settings; };
+  host.set = [this](const Settings& s) { ApplySettings(s); };
+  host.action = [this](UiAction a) { SettingsAction(a); };
+  host.monitors = [] {
+    std::vector<UiMonitor> out;
+    for (const auto& m : EnumerateMonitors()) {
+      UiMonitor u;
+      u.id = m.info.id;
+      u.width = m.info.rect.width();
+      u.height = m.info.rect.height();
+      u.scale = m.info.scale;
+      u.primary = m.info.primary;
+      out.push_back(u);
+    }
+    return out;
+  };
+  host.status = [this] { return Status(); };
+  host.setDiagnosticsLogging = [this](bool on) {
+    diagLogging_ = on;
+    Log("diagnostics logging %s (settings window)", on ? "on" : "off");
+  };
+  host.hotkeyCapture = [this](bool capturing) {
+    if (capturing) UnregisterHotkeys();
+    else RegisterHotkeys();
+  };
+  host.lang = [this] { return lang_; };
+  settingsWnd_.Init(GetModuleHandleW(nullptr), std::move(host));
+}
+
+void App::ApplySettings(Settings s) {
+  const Settings old = state_.settings;
+  Sanitize(s);
+  if (s.launchAtStartup != old.launchAtStartup && !SetAutostart(s.launchAtStartup, L"")) {
+    Log("autostart: could not %s", s.launchAtStartup ? "enable" : "disable");
+    s.launchAtStartup = old.launchAtStartup;
+  }
+  state_.settings = s;
+  RefreshSystemState();
+  if (s.language != old.language) AddTrayIcon();  // tooltip language
+  if (s.hotkeyToggle != old.hotkeyToggle || s.hotkeyDecorate != old.hotkeyDecorate) RegisterHotkeys();
+  // The user asked: no debounce.
+  if (s.pauseFullscreen != old.pauseFullscreen || s.pauseMaximized != old.pauseMaximized) CheckFullscreen(true);
+  PushConfig();
+  ScheduleSave();
+  if (settingsWnd_.IsOpen()) settingsWnd_.Refresh();
+}
+
+void App::SettingsAction(UiAction a) {
+  switch (a) {
+    case UiAction::Decorate:
+      settingsWnd_.Hide();
+      EnterDecorate();
       break;
-    case ID_SANTA: engine_.Command(EngineCommand::Santa); save = false; break;
-    case ID_TRAIN: engine_.Command(EngineCommand::Train); save = false; break;
-    case ID_YETI: engine_.Command(EngineCommand::Yeti); save = false; break;
-    case ID_CLEAR_SNOW: engine_.Command(EngineCommand::ClearSnow); save = false; break;
-    case ID_CLEAR_DECOR:
+    case UiAction::ClearSnow: engine_.Command(EngineCommand::ClearSnow); break;
+    case UiAction::ClearDecorations:
       state_.decor.trees.clear();
       state_.decor.snowmen.clear();
       PushDecor();
+      ScheduleSave();
       break;
-    case ID_LANG_AUTO: s.language = "auto"; break;
-    case ID_LANG_EN: s.language = "en"; break;
-    case ID_LANG_RU: s.language = "ru"; break;
-    case ID_LANG_UK: s.language = "uk"; break;
-    case ID_STARTUP:
-      if (SetAutostart(!s.launchAtStartup, L"")) s.launchAtStartup = !s.launchAtStartup;
-      break;
-    case ID_DEBUG: s.debugOverlay = !s.debugOverlay; break;
-    case ID_OPEN_FOLDER:
+    case UiAction::Santa: engine_.Command(EngineCommand::Santa); break;
+    case UiAction::Train: engine_.Command(EngineCommand::Train); break;
+    case UiAction::Yeti: engine_.Command(EngineCommand::Yeti); break;
+    case UiAction::CopyDiagnostics: CopyDiagnostics(); break;
+    case UiAction::SaveDiagnostics: SaveDiagnostics(); break;
+    case UiAction::OpenSettingsFolder:
       ShellExecuteW(nullptr, L"open", AppDataDir().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-      save = false;
       break;
-    case ID_QUIT:
-      DestroyWindow(hwnd_);
-      return;
-    default:
-      if (id >= ID_THEME_BASE && id < ID_THEME_BASE + ThemeIds().size()) s.theme = ThemeIds()[id - ID_THEME_BASE];
-      else save = false;
+    case UiAction::OpenLogFolder: ShellExecuteW(nullptr, L"open", LogDir().c_str(), nullptr, nullptr, SW_SHOWNORMAL); break;
+    case UiAction::ResetDefaults: {
+      Settings s = state_.settings;
+      ResetToDefaults(s);
+      Log("settings: reset to defaults");
+      ApplySettings(s);
+      break;
+    }
   }
-  Sanitize(s);
-  RefreshSystemState();
-  if (id >= ID_LANG_AUTO && id <= ID_LANG_UK) AddTrayIcon();  // tooltip language
-  if (id == ID_PAUSE_FULLSCREEN) CheckFullscreen(true);  // the user asked: no debounce
-  PushConfig();
-  if (save) ScheduleSave();
+}
+
+UiStatus App::Status() {
+  UiStatus st;
+  const Settings& s = state_.settings;
+  for (size_t i = 0; i < diag_.size(); ++i) {
+    const MonitorDiag& d = diag_[i];
+    std::string line = Fmt("%s %zu%s: ", UiTr(UiStr::StatusMonitor, lang_), i + 1, d.primary ? " *" : "");
+    bool off = std::find(s.disabledMonitors.begin(), s.disabledMonitors.end(), d.id) != s.disabledMonitors.end();
+    bool hidden = std::find(hiddenMonitors_.begin(), hiddenMonitors_.end(), d.id) != hiddenMonitors_.end();
+    if (!s.enabled) line += UiTr(UiStr::StatusSnowOff, lang_);
+    else if (pauseUntil_ > 0) line += UiTr(UiStr::StatusPausedHour, lang_);
+    else if (systemPaused_ || displayOff_) line += UiTr(UiStr::StatusPausedSystem, lang_);
+    else if (s.pauseOnBattery && onBattery_) line += UiTr(UiStr::StatusPausedBattery, lang_);
+    else if (off) line += UiTr(UiStr::StatusMonitorOff, lang_);
+    else if (hidden && d.decision.reason == PauseReason::Maximized) line += UiTr(UiStr::StatusPausedMaximized, lang_);
+    else if (hidden) line += UiTr(UiStr::StatusPausedFullscreen, lang_);
+    else line += UiTr(UiStr::StatusSnowing, lang_);
+    if (!d.exe.empty()) line += " (" + d.exe + ")";
+    st.pauseLines.push_back(Widen(line));
+  }
+  st.trees = static_cast<int>(state_.decor.trees.size());
+  st.maxTrees = kMaxTrees;
+  st.snowmen = static_cast<int>(state_.decor.snowmen.size());
+  st.maxSnowmen = kMaxSnowmen;
+  st.diagnosticsLogging = DiagnosticsLogging();
+  st.pausedForHour = pauseUntil_ > 0;
+  st.fps = engine_.Fps();
+  st.build = SNOW_BUILD_ID;
+  return st;
 }
 
 // ---------------------------------------------------------- decorate mode
@@ -861,21 +1036,21 @@ LRESULT App::Handle(HWND h, UINT m, WPARAM w, LPARAM l) {
   switch (m) {
     case WM_APP_TRAY: {
       // NOTIFYICON_VERSION_4: NIN_SELECT (left click / Enter) and WM_CONTEXTMENU
-      // (right click). WM_LBUTTONUP also arrives for a left click; ignoring it
-      // avoids opening the menu twice.
+      // (right click). A left click or double click opens the settings window;
+      // the right-click menu keeps only the quick actions.
       UINT ev = LOWORD(l);
-      if (ev == WM_CONTEXTMENU || ev == NIN_SELECT || ev == NIN_KEYSELECT) {
+      if (ev == WM_CONTEXTMENU) {
         POINT pt{GET_X_LPARAM(w), GET_Y_LPARAM(w)};
         ShowMenu(pt);
+      } else if (ev == NIN_SELECT || ev == NIN_KEYSELECT || ev == WM_LBUTTONDBLCLK) {
+        if (!opts_.harness) settingsWnd_.Show();
       }
       return 0;
     }
-    case WM_APP_SECOND_INSTANCE: {
-      POINT pt;
-      GetCursorPos(&pt);
-      ShowMenu(pt);
+    case WM_APP_SECOND_INSTANCE:
+      // Started again (START.cmd twice, autostart + manual): show the settings.
+      if (!opts_.harness) settingsWnd_.Show();
       return 0;
-    }
     case WM_APP_FOREGROUND:
       CheckFullscreen();
       SetTimer(hwnd_, T_TOPMOST, 150, nullptr);
@@ -914,7 +1089,12 @@ LRESULT App::Handle(HWND h, UINT m, WPARAM w, LPARAM l) {
       return 0;
     case WM_TIMER:
       switch (w) {
-        case T_FULLSCREEN: CheckFullscreen(); break;
+        case T_FULLSCREEN:
+          CheckFullscreen();
+          if (DiagnosticsLogging())
+            for (const std::string& line : DiagnosticsLines()) Log("diag: %s", line.c_str());
+          break;
+        case T_PAUSE_HOUR: SetPauseHour(false); break;
         case T_FS_DEBOUNCE:
           KillTimer(hwnd_, T_FS_DEBOUNCE);
           CheckFullscreen();
@@ -997,9 +1177,22 @@ LRESULT App::Handle(HWND h, UINT m, WPARAM w, LPARAM l) {
       return 0;
     case WM_DESTROY:
       // Release everything tied to this window while it still exists.
+      if (DiagnosticsLogging()) {
+        std::string report = DiagnosticsReport();
+        Log("diagnostics report at exit:");
+        size_t start = 0;
+        while (start < report.size()) {
+          size_t end = report.find("\r\n", start);
+          if (end == std::string::npos) end = report.size();
+          Log("  %s", report.substr(start, end - start).c_str());
+          start = end + 2;
+        }
+      }
+      settingsWnd_.Destroy();
       KillTimer(h, T_FULLSCREEN);
       KillTimer(h, T_FS_DEBOUNCE);
       KillTimer(h, T_SLOW);
+      KillTimer(h, T_PAUSE_HOUR);
       for (HPOWERNOTIFY& pn : powerNotify_) {
         if (pn) UnregisterPowerSettingNotification(pn);
         pn = nullptr;
@@ -1060,6 +1253,7 @@ int App::Run(const LaunchOptions& opts) {
 
   LoadState();
   RefreshSystemState();
+  if (!opts_.harness) InitSettingsWindow();
   tracker_.Start(hwnd_);
   engine_.Start(opts_, &tracker_, hwnd_);
   PushConfig();
@@ -1082,7 +1276,10 @@ int App::Run(const LaunchOptions& opts) {
     if (!std::filesystem::exists(store_->file(), ec)) Balloon(std::string(T(Str::Tagline)) + " " + T(Str::TipDecorateHint));
   }
   wchar_t qa[16] = {};
-  if (GetEnvironmentVariableW(L"DESKTOPSNOW_QUIT_AFTER", qa, 16) > 0) SetTimer(hwnd_, T_QUIT_AFTER, _wtoi(qa) * 1000, nullptr);
+  int quitAfter = opts_.quitAfter;
+  if (quitAfter <= 0 && GetEnvironmentVariableW(L"DESKTOPSNOW_QUIT_AFTER", qa, 16) > 0) quitAfter = _wtoi(qa);
+  if (quitAfter > 0) SetTimer(hwnd_, T_QUIT_AFTER, static_cast<UINT>(quitAfter) * 1000, nullptr);
+  if (DiagnosticsLogging()) Log("diagnostics: logging every pause decision every 0.5 s");
 
   std::wstring quitName = L"Local\\DesktopSnow." + opts_.instance + L".Quit";
   quitEvent_ = CreateEventW(nullptr, TRUE, FALSE, quitName.c_str());

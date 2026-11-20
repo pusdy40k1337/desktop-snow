@@ -205,6 +205,7 @@ struct Engine::Impl {
   double fpsWindowStart = 0;
   int fpsFrames = 0;
   double fps = 0, lastCostMs = 0;
+  std::atomic<double> fpsShared{0};  // `fps` for other threads (settings window)
   double hotSpeed = 0, hotErrPx = 0, hotErrAvg = 0;
   std::unordered_map<HWND, std::pair<double, Vec2d>> lastPrediction;  // target time, predicted pos
   FILE* telemetry = nullptr;
@@ -338,6 +339,18 @@ std::vector<HWND> Engine::OverlayWindows() {
   std::lock_guard<std::mutex> lock(impl_->mu);
   return impl_->overlayHwnds;
 }
+
+double Engine::Fps() const { return impl_ ? impl_->fpsShared.load() : 0.0; }
+
+namespace {
+// Where overlays go in the z-order: the top of the topmost band, or right under
+// our settings window while that is topmost (it is while the user works in it).
+HWND OverlayInsertAfter(HWND keepAbove) {
+  if (keepAbove && IsWindowVisible(keepAbove) && (GetWindowLongW(keepAbove, GWL_EXSTYLE) & WS_EX_TOPMOST))
+    return keepAbove;
+  return HWND_TOPMOST;
+}
+}  // namespace
 
 // ============================================================ render thread
 
@@ -642,7 +655,8 @@ void Engine::Impl::ApplyVisibility() {
       ov.pending = 0;
       ov.stalledSince = 0;
       ShowWindow(ov.hwnd, SW_SHOWNOACTIVATE);
-      SetWindowPos(ov.hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+      SetWindowPos(ov.hwnd, OverlayInsertAfter(c.keepAbove), 0, 0, 0, 0,
+                   SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
       ov.fadeStart = opts.harness ? 0 : Now();
       Log("engine: overlay %s shown", ov.device.c_str());
     }
@@ -787,7 +801,7 @@ void Engine::Impl::PullShared() {
       case EngineCommand::ReassertTopmost:
         for (auto& ov : overlays)
           if (ov.shown)
-            SetWindowPos(ov.hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+            SetWindowPos(ov.hwnd, OverlayInsertAfter(c.keepAbove), 0, 0, 0, 0,
                          SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
         break;
     }
@@ -1464,7 +1478,14 @@ bool Engine::Impl::DrawDebug(const Overlay& ov, const FrameTiming& ft) {
     dc->FillRectangle(D2D1::RectF(R, T, R + 1, B), br);
   }
   dc->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-  if (!ov.primary) return true;
+  // Text on the primary monitor, or on the first visible one while the primary is paused.
+  const Overlay* textHost = nullptr;
+  for (const auto& o : overlays) {
+    if (!o.shown) continue;
+    if (!textHost || o.primary) textHost = &o;
+    if (o.primary) break;
+  }
+  if (textHost != &ov) return true;
   IDWriteTextFormat* f = Format(fmtMono, L"Consolas", 12.f, ov.scale, false);
   if (!f) return true;
   WorldStats st = world.stats();
@@ -1483,12 +1504,16 @@ bool Engine::Impl::DrawDebug(const Overlay& ov, const FrameTiming& ft) {
            hotSpeed, hotErrPx, hotErrAvg, st.activeSurfaces, st.surfaces, st.flakes, st.debris, st.bursts,
            static_cast<double>(world.wind()), static_cast<double>(world.gust()), c.batteryMode ? 1 : 0,
            c.reducedMotion ? 1 : 0);
+  std::wstring all = text;
+  if (!c.diagText.empty()) all += L"\npause decision:\n" + Widen(c.diagText);
+  int lines = 1;
+  for (wchar_t ch : all) lines += ch == L'\n' ? 1 : 0;
   float x = static_cast<float>(ov.work.left) + 12 * ov.scale, y = static_cast<float>(ov.work.top) + 12 * ov.scale;
-  D2D1_RECT_F box = D2D1::RectF(x, y, x + 380 * ov.scale, y + 150 * ov.scale);
+  D2D1_RECT_F box = D2D1::RectF(x, y, x + 460 * ov.scale, y + (16.5f * static_cast<float>(lines) + 18.f) * ov.scale);
   dc->FillRoundedRectangle(D2D1::RoundedRect(box, 6 * ov.scale, 6 * ov.scale), brush(D2D1::ColorF(0, 0, 0, 0.72f)));
   box.left += 8 * ov.scale;
   box.top += 6 * ov.scale;
-  dc->DrawText(text, static_cast<UINT32>(wcslen(text)), f, box, brush(D2D1::ColorF(0.9f, 1.f, 0.9f, 1.f)));
+  dc->DrawText(all.c_str(), static_cast<UINT32>(all.size()), f, box, brush(D2D1::ColorF(0.9f, 1.f, 0.9f, 1.f)));
   return true;
 }
 
@@ -1746,6 +1771,7 @@ bool Engine::Impl::Frame(const FrameTiming& ft) {
   ++fpsFrames;
   if (ft.sample - fpsWindowStart >= 1.0) {
     fps = fpsFrames / (ft.sample - fpsWindowStart);
+    fpsShared.store(fps);
     fpsFrames = 0;
     fpsWindowStart = ft.sample;
   }

@@ -67,25 +67,32 @@ scale %, refresh rate) and attach `%LOCALAPPDATA%\DesktopSnow\logs\main.log`.
       (try clicking on a pile and on falling flakes).
 - [ ] The overlay never takes focus; it is not in Alt+Tab or on the taskbar.
 - [ ] `Ctrl+Alt+S` toggles snow. If the hotkey is taken, a notice appears and the tray still works.
-- [ ] Fullscreen (tray → *Pause during fullscreen* ticked, the default). Each of
+- [ ] Fullscreen (Settings → General → *Pause during fullscreen*, on by default). Each of
       these hides the snow on its monitor within about half a second, and it
       fades back in about half a second after leaving fullscreen:
       a game in exclusive fullscreen; a game in borderless/windowed fullscreen;
       YouTube fullscreen (`F`) in Chrome/Edge/Firefox; `F11` in a browser;
       a video player (Movies & TV, VLC, mpv) fullscreen, also while its controls
-      show; PowerPoint slideshow (`F5`).
+      show; PowerPoint slideshow (`F5`). If one does not, run `FULLSCREEN-CHECK.cmd`
+      while reproducing it and send `FULLSCREEN-CHECK-log.txt` (one `diag:` line per
+      monitor every 0.5 s: deciding window, class, exe, frame, monitor rect, shell state, rule).
 - [ ] Alt+Tab out of a fullscreen game and straight back: no flash of snow.
       Win key / Start menu over a fullscreen video: the snow stays hidden.
-- [ ] A maximised window (taskbar visible) is not fullscreen: snow keeps falling.
+- [ ] Maximised window (taskbar visible, *Restore Down* icon in the title bar) on top:
+      no snow on that monitor (*Pause when a window is maximized*, on by default);
+      restore it and the snow fades back. Same for a window snapped/resized to the
+      whole work area. A window a little smaller than the work area keeps the snow.
+      Settings → Diagnostics shows the decision per monitor live.
+- [ ] Untick *Pause when a window is maximized*: snow falls over maximised windows again.
 - [ ] Two monitors: fullscreen video on one, work on the other (click there):
       snow stays hidden on the video monitor only.
 - [ ] Untick *Pause during fullscreen*: snow appears over the fullscreen app at once.
 - [ ] Task Manager while everything is hidden by a fullscreen app: Desktop Snow
       uses ~0% CPU and ~0% GPU.
-- [ ] Taskbar snow: maximise Notepad or a browser. The snow line on the taskbar's
+- [ ] Taskbar snow (with *Pause when a window is maximized* off): maximise Notepad or a browser. The snow line on the taskbar's
       top edge never covers the bottom of the app (status bar, input fields, the
       browser's bottom bar); it is only visible where the desktop is behind it.
-      Tray → *Snow on the taskbar* turns that snow line off and on.
+      Settings → Snow → *Snow on the taskbar* turns that snow line off and on.
 - [ ] One monitor turned off at its power button (others stay on): the others keep
       snowing smoothly (the log shows no rising `latency-wait timeouts`), and the
       monitor gets its snow back when turned on.

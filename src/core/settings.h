@@ -2,6 +2,7 @@
 #pragma once
 #include <filesystem>
 #include <string>
+#include <vector>
 #include "decor.h"
 #include "json.h"
 
@@ -65,6 +66,9 @@ struct Settings {
   std::string reducedMotion = "auto";  // auto | on | off
   bool batterySaver = true;  // halve intensity on battery / battery saver
   bool pauseFullscreen = true;  // hide the snow on monitors showing a fullscreen app
+  bool pauseMaximized = true;   // ...and on monitors whose top window is maximised / fills the work area
+  bool pauseOnBattery = false;  // no snow at all while on battery
+  std::vector<std::string> disabledMonitors;  // device names of monitors with snow off, e.g. \\.\DISPLAY2
   std::string hotkeyToggle = "Ctrl+Alt+S";
   std::string hotkeyDecorate = "Ctrl+Alt+D";
   SnowSettings snow;
@@ -81,6 +85,9 @@ struct AppState {
 
 // Clamp every field into its valid range (hand-edited / corrupt values).
 void Sanitize(Settings& s);
+// "Reset to defaults": every setting back to its default, except launch at
+// startup, which mirrors the registry and is changed only on request.
+void ResetToDefaults(Settings& s);
 void Sanitize(DecorState& d);
 
 json::Value ToJson(const AppState& st);

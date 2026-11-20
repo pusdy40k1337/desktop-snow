@@ -40,6 +40,13 @@ void Sanitize(Settings& s) {
   if (!themeOk) s.theme = "classic";
   if (s.hotkeyToggle.size() > 40) s.hotkeyToggle = "Ctrl+Alt+S";
   if (s.hotkeyDecorate.size() > 40) s.hotkeyDecorate = "Ctrl+Alt+D";
+  {
+    std::vector<std::string> mons;
+    for (const auto& id : s.disabledMonitors)
+      if (!id.empty() && id.size() <= 64 && mons.size() < 16 && std::find(mons.begin(), mons.end(), id) == mons.end())
+        mons.push_back(id);
+    s.disabledMonitors = std::move(mons);
+  }
 
   SnowSettings& n = s.snow;
   n.density = clampInt(n.density, 0, 100);
@@ -69,6 +76,12 @@ void Sanitize(Settings& s) {
   s.sync.mode = oneOf(s.sync.mode, {"latch", "vsync"}, "latch");
   s.sync.predictor = oneOf(s.sync.predictor, {"linear", "stepped"}, "stepped");
   s.sync.latchMarginMs = clampNum(s.sync.latchMarginMs, 0, 8, 1.5f);
+}
+
+void ResetToDefaults(Settings& s) {
+  bool startup = s.launchAtStartup;
+  s = Settings{};
+  s.launchAtStartup = startup;
 }
 
 void Sanitize(DecorState& d) {
@@ -139,6 +152,13 @@ Value ToJson(const AppState& st) {
   set.set("reducedMotion", s.reducedMotion);
   set.set("batterySaver", s.batterySaver);
   set.set("pauseFullscreen", s.pauseFullscreen);
+  set.set("pauseMaximized", s.pauseMaximized);
+  set.set("pauseOnBattery", s.pauseOnBattery);
+  {
+    Value mons = Value::array();
+    for (const auto& id : s.disabledMonitors) mons.push(id);
+    set.set("disabledMonitors", mons);
+  }
   set.set("hotkeyToggle", s.hotkeyToggle);
   set.set("hotkeyDecorate", s.hotkeyDecorate);
 
@@ -261,6 +281,14 @@ void FromJson(const Value& root, AppState& st) {
     rd(set, "reducedMotion", s.reducedMotion);
     rd(set, "batterySaver", s.batterySaver);
     rd(set, "pauseFullscreen", s.pauseFullscreen);
+    rd(set, "pauseMaximized", s.pauseMaximized);
+    rd(set, "pauseOnBattery", s.pauseOnBattery);
+    if (set["disabledMonitors"].isArray()) {
+      s.disabledMonitors.clear();
+      const Value& mons = set["disabledMonitors"];
+      for (size_t i = 0; i < mons.size(); ++i)
+        if (mons.at(i).isString()) s.disabledMonitors.push_back(mons.at(i).asString());
+    }
     rd(set, "hotkeyToggle", s.hotkeyToggle);
     rd(set, "hotkeyDecorate", s.hotkeyDecorate);
     const Value& snow = set["snow"];

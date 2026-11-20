@@ -1081,6 +1081,7 @@ struct FullscreenResult {
   FsPhase before, during, after;
   double hideMs = -1, showMs = -1;
   bool allHidden = false;  // every overlay hidden while the fake app was up
+  std::vector<std::string> cases;  // extra pause cases: "name: PASS/FAIL - detail"
   std::vector<std::string> failures;
 };
 
@@ -1861,6 +1862,7 @@ void RunFullscreenTest(Context& ctx, HANDLE quitEvent, HANDLE job) {
   fs::remove(log, ec);
   ctx.overlayLogs.push_back(log);
   auto fail = [&](const std::string& why) { r.failures.push_back(why); };
+  std::vector<std::string> caseFailures;  // reported after the main checks
 
   WindowThread wt;
   if (!wt.Start()) {
@@ -1961,6 +1963,57 @@ void RunFullscreenTest(Context& ctx, HANDLE quitEvent, HANDLE job) {
       }
       r.after = MeasurePhase(ctx, sv, ov.process(), roi, 3.0, idx);
       Printf("  after:   {}\n", PhaseText(r.after));
+
+      // Real apps differ from the borderless test window: a window maximised with
+      // the normal button, a fullscreen window a pixel or two short of the monitor
+      // and an always-on-top fullscreen window must all hide the snow; a window
+      // that almost fills the work area must not.
+      struct PauseCase {
+        const char* name;
+        DWORD style, ex;
+        RECT rc;
+        bool maximize, expectHidden;
+      };
+      const PauseCase cases[] = {
+          {"maximized window (normal maximize button)", WS_OVERLAPPEDWINDOW, 0, work, true, true},
+          {"borderless fullscreen 2 px short", WS_POPUP, 0, RECT{mon.left, mon.top, mon.right - 2, mon.bottom - 2},
+           false, true},
+          {"always-on-top fullscreen window", WS_POPUP, WS_EX_TOPMOST, mon, false, true},
+          {"window 24 px short of the work area", WS_POPUP, 0, RECT{work.left, work.top, work.right, work.bottom - 24},
+           false, false},
+      };
+      for (const PauseCase& pc : cases) {
+        HWND w = nullptr;
+        wt.Invoke([&] {
+          w = CreateWindowExW(pc.ex, kFullscreenClass, L"SnowHarness pause case", pc.style, pc.rc.left, pc.rc.top,
+                              pc.rc.right - pc.rc.left, pc.rc.bottom - pc.rc.top, nullptr, nullptr,
+                              GetModuleHandleW(nullptr), nullptr);
+          if (!w) return;
+          ShowWindow(w, pc.maximize ? SW_SHOWMAXIMIZED : SW_SHOW);
+          SetForegroundWindow(w);  // best effort
+          UpdateWindow(w);
+        });
+        std::string res;
+        if (!w) {
+          res = "FAIL - cannot create the window";
+        } else if (pc.expectHidden) {
+          const double hideMs = WaitShown(sv, idx, false, 3000);
+          wt.Invoke([&] { DestroyWindow(w); });
+          const double showMs = hideMs >= 0 ? WaitShown(sv, idx, true, 3000) : -1;
+          if (hideMs < 0) res = "FAIL - snow still visible after 3 s";
+          else if (showMs < 0) res = "FAIL - snow did not come back within 3 s after it closed";
+          else res = std::format("PASS - hidden after {:.0f} ms, back after {:.0f} ms", hideMs, showMs);
+        } else {
+          const double hideMs = WaitShown(sv, idx, false, 1500);
+          wt.Invoke([&] { DestroyWindow(w); });
+          if (hideMs >= 0) WaitShown(sv, idx, true, 3000);
+          res = hideMs < 0 ? std::string("PASS - snow kept falling") : std::format("FAIL - snow hidden after {:.0f} ms", hideMs);
+        }
+        Printf("  case {}: {}\n", pc.name, res);
+        r.cases.push_back(std::string(pc.name) + ": " + res);
+        if (res.rfind("FAIL", 0) == 0) caseFailures.push_back(std::string(pc.name) + ": " + res.substr(7));
+        SleepMs(700);  // debounce settles before the next case
+      }
     }
     // The brightest capture of each phase, for a look at what was counted.
     for (const auto& [name, ph] : {std::pair<const char*, const FsPhase*>{"before", &r.before},
@@ -1994,6 +2047,7 @@ void RunFullscreenTest(Context& ctx, HANDLE quitEvent, HANDLE job) {
     if (r.after.presents <= 0) fail("no frames presented after the fullscreen app closed");
     if (r.before.maxBright > 0 && r.after.maxBright == 0) fail("no snow captured after the fullscreen app closed");
   }
+  for (const std::string& f : caseFailures) fail(f);
   r.pass = r.failures.empty();
   for (const std::string& f : r.failures) Printf("  FAIL: {}\n", f);
   if (r.before.maxBright == 0 && r.pass)
@@ -2007,6 +2061,11 @@ std::string FullscreenSummary(const FullscreenResult& r) {
     s += std::format(" - hidden after {:.0f} ms, CPU {:.2f}% -> {:.2f}% of a core, {} -> {} presents", r.hideMs,
                      r.before.cpuPct, r.during.cpuPct, r.before.presents, r.during.presents);
   if (r.showMs >= 0) s += std::format(", back after {:.0f} ms with {} presents", r.showMs, r.after.presents);
+  if (!r.cases.empty()) {
+    size_t ok = 0;
+    for (const std::string& c : r.cases) ok += c.find(": PASS") != std::string::npos ? 1 : 0;
+    s += std::format(", extra cases {}/{} passed", ok, r.cases.size());
+  }
   for (const std::string& f : r.failures) s += "; " + f;
   return s;
 }
@@ -2099,6 +2158,7 @@ int Finish(Context& ctx, int abortCode) {
   Printf("Valid frames measured: {}{}\n", ctx.validTotal, ctx.validTotal < 10 ? " (fewer than 10!)" : "");
   Printf("Acceptance: {}\n", OverallPass(ctx) ? "PASS" : "FAIL");
   Print("Fullscreen pause: " + FullscreenSummary(ctx.fullscreen) + "\n");
+  for (const std::string& c : ctx.fullscreen.cases) Print("  case " + c + "\n");
   Print("Plain snowfall (nothing moving):\n");
   for (const std::string& l : ctx.snowfallStats) Printf("    {}\n", l);
   if (!ctx.snowfallNote.empty()) Printf("    {}\n", ctx.snowfallNote);

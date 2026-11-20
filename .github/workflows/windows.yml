@@ -72,6 +72,25 @@ jobs:
           path: decor-render/
           if-no-files-found: error
 
+      - name: Render the settings window (every section, dark and light)
+        # The same paint code as on screen, drawn offscreen with software rendering (no Mica here).
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:GITHUB_WORKSPACE 'settings-render'
+          $p = Start-Process dist\DesktopSnow.exe -ArgumentList '--render-settings', "`"$dir`"" -Wait -PassThru
+          "exit code $($p.ExitCode)"
+          Get-ChildItem $dir -ErrorAction SilentlyContinue | Format-Table Name, Length -AutoSize | Out-String | Write-Host
+          if ($p.ExitCode -ne 0 -or @(Get-ChildItem $dir -Filter *.png -ErrorAction SilentlyContinue).Count -lt 14) {
+            "::error::settings render failed"; exit 1
+          }
+
+      - name: Upload the settings renders
+        uses: actions/upload-artifact@v4
+        with:
+          name: settings-render-${{ steps.build.outputs.short }}
+          path: settings-render/
+          if-no-files-found: error
+
       - name: Assemble the ready-to-run package
         shell: pwsh
         env:
@@ -80,7 +99,7 @@ jobs:
           SHA: ${{ steps.build.outputs.sha }}
         run: |
           New-Item -ItemType Directory -Force package | Out-Null
-          Copy-Item dist\DesktopSnow.exe, dist\SnowHarness.exe, packaging\START.cmd, packaging\TEST.cmd, packaging\run.cmd, packaging\harness.cmd, packaging\README.txt package
+          Copy-Item dist\DesktopSnow.exe, dist\SnowHarness.exe, packaging\START.cmd, packaging\TEST.cmd, packaging\FULLSCREEN-CHECK.cmd, packaging\run.cmd, packaging\harness.cmd, packaging\README.txt package
           Add-Content package\README.txt -Value @(
             '',
             'Build',
@@ -106,7 +125,7 @@ jobs:
           Compress-Archive -Path package\* -DestinationPath $zip -Force
           $dst = Join-Path $env:RUNNER_TEMP 'extracted copy\DesktopSnow'
           Expand-Archive $zip -DestinationPath $dst -Force
-          foreach ($cmd in 'START.cmd', 'TEST.cmd', 'run.cmd', 'harness.cmd') {
+          foreach ($cmd in 'START.cmd', 'TEST.cmd', 'FULLSCREEN-CHECK.cmd', 'run.cmd', 'harness.cmd') {
             if (-not ([IO.File]::ReadAllText((Join-Path $dst $cmd))).Contains("`r`n")) { "::error::$cmd lacks CRLF line endings"; exit 1 }
           }
           "PKG=$dst" >> $env:GITHUB_ENV
@@ -115,7 +134,7 @@ jobs:
       - name: START.cmd (calls run.cmd) from the unzipped folder (20 s, then quit)
         shell: pwsh
         run: |
-          & cmd.exe /d /c "`"$env:PKG\START.cmd`""
+          & cmd.exe /d /c "`"$env:PKG\START.cmd`" --diagnostics"
           if ($LASTEXITCODE -ne 0) { "::error::START.cmd exited with $LASTEXITCODE"; exit 1 }
           Start-Sleep 20
           $p = Get-Process DesktopSnow -ErrorAction SilentlyContinue
@@ -126,6 +145,21 @@ jobs:
           if (-not (Test-Path $log)) { "::error::run.cmd did not write $log"; exit 1 }
           Get-Content $log
           if (-not (Select-String -Path $log -Pattern 'engine: last' -Quiet)) { "::error::no fps line in $log"; exit 1 }
+          if (-not (Select-String -Path $log -Pattern 'diag: mon=' -Quiet)) { "::error::no pause-decision diagnostics in $log"; exit 1 }
+
+      - name: FULLSCREEN-CHECK.cmd from the unzipped folder (shortened to 12 s)
+        shell: pwsh
+        run: |
+          & cmd.exe /d /c "`"$env:PKG\FULLSCREEN-CHECK.cmd`" --quit-after 12"
+          if ($LASTEXITCODE -ne 0) { "::error::FULLSCREEN-CHECK.cmd exited with $LASTEXITCODE"; exit 1 }
+          $log = Join-Path $env:PKG 'FULLSCREEN-CHECK-log.txt'
+          if (-not (Test-Path $log)) { "::error::FULLSCREEN-CHECK.cmd did not write $log"; exit 1 }
+          $diag = @(Select-String -Path $log -Pattern 'diag: mon=')
+          "decision lines: $($diag.Count)"
+          $diag | Select-Object -First 4 | ForEach-Object { $_.Line }
+          if ($diag.Count -lt 10) { "::error::expected a decision line every 0.5 s, got $($diag.Count)"; exit 1 }
+          if (-not (Select-String -Path $log -Pattern 'diagnostics report at exit' -Quiet)) { "::error::no exit report in $log"; exit 1 }
+          Select-String -Path $log -Pattern '^\S+   (Build|Settings|State):' | ForEach-Object { $_.Line }
 
       - name: TEST.cmd (calls harness.cmd) from the unzipped folder (CI VM, best effort)
         # GitHub's VM has no GPU and a fixed ~64 Hz virtual display; these numbers
@@ -156,7 +190,7 @@ jobs:
           $line = Select-String -Path $f -Pattern '^Fullscreen pause: ' | Select-Object -Last 1
           if (-not $line) { "::error::no 'Fullscreen pause:' line in $f"; exit 1 }
           $line.Line
-          Select-String -Path $f -Pattern '^  (before|during|after): |overlay (hidden|back) after|^  FAIL: ' | ForEach-Object { $_.Line }
+          Select-String -Path $f -Pattern '^  (before|during|after): |overlay (hidden|back) after|^  FAIL: |^  case ' | ForEach-Object { $_.Line }
           if ($line.Line -notmatch '^Fullscreen pause: PASS') { "::error::$($line.Line)"; exit 1 }
 
       - name: Resource check (3 min of snowfall, clean shutdown)
@@ -188,7 +222,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force ci-results | Out-Null
           if ($env:PKG -and (Test-Path $env:PKG)) {
-            foreach ($f in 'SnowHarness-results.txt', 'DesktopSnow-log.txt') {
+            foreach ($f in 'SnowHarness-results.txt', 'DesktopSnow-log.txt', 'FULLSCREEN-CHECK-log.txt') {
               $p = Join-Path $env:PKG $f
               if (Test-Path $p) { Copy-Item $p ci-results }
             }

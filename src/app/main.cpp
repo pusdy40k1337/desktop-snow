@@ -1,6 +1,7 @@
 // Desktop Snow - entry point.
 #include "app.h"
 #include "platform.h"
+#include "settings_window.h"
 #include "snapshot.h"
 
 #ifndef SNOW_BUILD_ID
@@ -58,8 +59,11 @@ void PrintUsage() {
       "  --instance <name>    run a separate instance (own state file and mutex)\n"
       "  --no-persist         do not write the state file\n"
       "  --harness            measurement mode used by SnowHarness.exe\n"
+      "  --diagnostics        log the pause decision of every monitor every 0.5 s\n"
+      "  --quit-after <s>     exit after <s> seconds\n"
       "  --render-decor <dir> render every decoration and visitor with Direct2D into\n"
-      "                       <dir>\\decor-<theme>.png and exit\n");
+      "                       <dir>\\decor-<theme>.png and exit\n"
+      "  --render-settings <dir>  render every settings page into <dir>\\settings-*.png and exit\n");
 }
 
 }  // namespace
@@ -70,12 +74,15 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
   wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc);
   snow::win::LaunchOptions opts;
   bool help = false;
-  std::wstring renderDecorDir;
+  std::wstring renderDecorDir, renderSettingsDir;
   for (int i = 1; i < argc; ++i) {
     std::wstring a = argv[i];
     auto next = [&]() -> std::wstring { return i + 1 < argc ? std::wstring(argv[++i]) : std::wstring(); };
     if (a == L"--debug") opts.debug = true;
     else if (a == L"--render-decor") renderDecorDir = next();
+    else if (a == L"--render-settings") renderSettingsDir = next();
+    else if (a == L"--diagnostics") opts.diagnostics = true;
+    else if (a == L"--quit-after") opts.quitAfter = _wtoi(next().c_str());
     else if (a == L"--console") opts.console = true;
     else if (a == L"--harness") {
       opts.harness = true;
@@ -96,7 +103,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     if (!iswalnum(ch) && ch != L'-' && ch != L'_') ch = L'_';
   if (opts.syncOverride != "latch" && opts.syncOverride != "vsync") opts.syncOverride.clear();
 
-  if (!renderDecorDir.empty()) opts.console = true;
+  if (!renderDecorDir.empty() || !renderSettingsDir.empty()) opts.console = true;
   if (opts.console || help) {
     if (!AttachConsole(ATTACH_PARENT_PROCESS)) AllocConsole();
     FILE* f = nullptr;
@@ -107,9 +114,10 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     PrintUsage();
     return 0;
   }
-  if (!renderDecorDir.empty()) {
+  if (!renderDecorDir.empty() || !renderSettingsDir.empty()) {
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-    int rc = snow::win::RenderDecorSnapshots(renderDecorDir, SNOW_BUILD_ID);
+    int rc = !renderDecorDir.empty() ? snow::win::RenderDecorSnapshots(renderDecorDir, SNOW_BUILD_ID)
+                                     : snow::win::RenderSettingsSnapshots(renderSettingsDir, SNOW_BUILD_ID);
     std::fflush(stdout);
     CoUninitialize();
     return rc;
