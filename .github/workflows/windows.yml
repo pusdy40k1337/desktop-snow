@@ -1,0 +1,223 @@
+name: windows
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # On pull requests build the branch's own head commit, not GitHub's
+          # temporary merge with the base branch.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Build id
+        id: build
+        shell: pwsh
+        run: |
+          $sha = (git rev-parse HEAD).Trim()
+          $short = $sha.Substring(0, 7)
+          "sha=$sha" >> $env:GITHUB_OUTPUT
+          "short=$short" >> $env:GITHUB_OUTPUT
+          "SNOW_BUILD_ID=$short" >> $env:GITHUB_ENV
+          "Building commit $sha"
+
+      - name: Build + unit tests (build.cmd)
+        shell: cmd
+        run: build.cmd -Config Release
+
+      - name: Check the exes need no Visual C++ runtime (static /MT)
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          $dumpbin = Get-ChildItem "$vs\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" | Select-Object -Last 1
+          $bad = $false
+          foreach ($exe in 'dist\DesktopSnow.exe', 'dist\SnowHarness.exe') {
+            $deps = & $dumpbin.FullName /nologo /dependents $exe |
+              Where-Object { $_ -match '^\s+\S+\.dll\s*$' } | ForEach-Object { $_.Trim().ToLowerInvariant() }
+            "$exe imports: $($deps -join ', ')"
+            $crt = $deps | Where-Object { $_ -match '^(vcruntime|msvcp|concrt|vccorlib|vcomp|ucrtbase|api-ms-win-crt-)' }
+            if ($crt) { "::error::$exe needs the Visual C++ runtime: $($crt -join ', ')"; $bad = $true }
+          }
+          if ($bad) { exit 1 }
+          "OK: no Visual C++ runtime DLLs imported; only DLLs that ship with Windows."
+
+      - name: Render the decorations with Direct2D (one PNG per theme)
+        # The real artwork code (gfx_decor.cpp) on Direct2D; the VM has no GPU, so WARP.
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:GITHUB_WORKSPACE 'decor-render'
+          $p = Start-Process dist\DesktopSnow.exe -ArgumentList '--render-decor', "`"$dir`"" -Wait -PassThru
+          "exit code $($p.ExitCode)"
+          Get-ChildItem $dir -ErrorAction SilentlyContinue | Format-Table Name, Length -AutoSize | Out-String | Write-Host
+          if ($p.ExitCode -ne 0 -or @(Get-ChildItem $dir -Filter *.png -ErrorAction SilentlyContinue).Count -lt 4) {
+            "::error::decoration render failed"; exit 1
+          }
+
+      - name: Upload the decoration renders
+        uses: actions/upload-artifact@v4
+        with:
+          name: decor-render-${{ steps.build.outputs.short }}
+          path: decor-render/
+          if-no-files-found: error
+
+      - name: Assemble the ready-to-run package
+        shell: pwsh
+        env:
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SHA: ${{ steps.build.outputs.sha }}
+        run: |
+          New-Item -ItemType Directory -Force package | Out-Null
+          Copy-Item dist\DesktopSnow.exe, dist\SnowHarness.exe, packaging\START.cmd, packaging\TEST.cmd, packaging\run.cmd, packaging\harness.cmd, packaging\README.txt package
+          Add-Content package\README.txt -Value @(
+            '',
+            'Build',
+            '-----',
+            "  Commit:  $env:SHA",
+            "  Branch:  $env:BRANCH",
+            "  CI run:  $env:RUN_URL",
+            "  Built:   $((Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm')) UTC"
+          )
+          Get-ChildItem package | Format-Table Name, Length -AutoSize | Out-String | Write-Host
+
+      - name: Upload the ready-to-run package
+        uses: actions/upload-artifact@v4
+        with:
+          name: DesktopSnow-win64-${{ steps.build.outputs.short }}
+          path: package/
+          if-no-files-found: error
+
+      - name: Unzip the package into a fresh folder (path with a space)
+        shell: pwsh
+        run: |
+          $zip = Join-Path $env:RUNNER_TEMP 'DesktopSnow.zip'
+          Compress-Archive -Path package\* -DestinationPath $zip -Force
+          $dst = Join-Path $env:RUNNER_TEMP 'extracted copy\DesktopSnow'
+          Expand-Archive $zip -DestinationPath $dst -Force
+          foreach ($cmd in 'START.cmd', 'TEST.cmd', 'run.cmd', 'harness.cmd') {
+            if (-not ([IO.File]::ReadAllText((Join-Path $dst $cmd))).Contains("`r`n")) { "::error::$cmd lacks CRLF line endings"; exit 1 }
+          }
+          "PKG=$dst" >> $env:GITHUB_ENV
+          Get-ChildItem $dst | Format-Table Name, Length -AutoSize | Out-String | Write-Host
+
+      - name: START.cmd (calls run.cmd) from the unzipped folder (20 s, then quit)
+        shell: pwsh
+        run: |
+          & cmd.exe /d /c "`"$env:PKG\START.cmd`""
+          if ($LASTEXITCODE -ne 0) { "::error::START.cmd exited with $LASTEXITCODE"; exit 1 }
+          Start-Sleep 20
+          $p = Get-Process DesktopSnow -ErrorAction SilentlyContinue
+          if (-not $p) { "::error::DesktopSnow.exe is not running 20 s after run.cmd"; exit 1 }
+          [System.Threading.EventWaitHandle]::OpenExisting('Local\DesktopSnow.main.Quit').Set() | Out-Null
+          if (-not $p.WaitForExit(10000)) { "::error::did not exit within 10 s"; Stop-Process $p; exit 1 }
+          $log = Join-Path $env:PKG 'DesktopSnow-log.txt'
+          if (-not (Test-Path $log)) { "::error::run.cmd did not write $log"; exit 1 }
+          Get-Content $log
+          if (-not (Select-String -Path $log -Pattern 'engine: last' -Quiet)) { "::error::no fps line in $log"; exit 1 }
+
+      - name: TEST.cmd (calls harness.cmd) from the unzipped folder (CI VM, best effort)
+        # GitHub's VM has no GPU and a fixed ~64 Hz virtual display; these numbers
+        # prove the pipeline works on real Windows, not 144 Hz behaviour.
+        continue-on-error: true
+        timeout-minutes: 20
+        shell: cmd
+        run: call "%PKG%\TEST.cmd" --quick --rates 60,144,1000 --snowfall 120
+
+      - name: Check SnowHarness-results.txt was written next to the exe
+        shell: pwsh
+        run: |
+          $f = Join-Path $env:PKG 'SnowHarness-results.txt'
+          if (-not (Test-Path $f)) { "::error::$f is missing"; exit 1 }
+          $t = Get-Content $f -Raw
+          foreach ($needle in 'Build:        ${{ steps.build.outputs.short }}', '==== SnowHarness summary ====', 'Acceptance:',
+                              'Fullscreen pause:', 'Plain snowfall (nothing moving):', 'engine: last',
+                              '---- overlay-snowfall.log ----', '---- overlay-fullscreen.log ----') {
+            if (-not $t.Contains($needle)) { "::error::the results file lacks '$needle'"; exit 1 }
+          }
+          "results file: $((Get-Item $f).Length) bytes"
+          $t
+
+      - name: Fullscreen pause must pass (fake fullscreen window hides the snow, load drops, snow returns)
+        shell: pwsh
+        run: |
+          $f = Join-Path $env:PKG 'SnowHarness-results.txt'
+          $line = Select-String -Path $f -Pattern '^Fullscreen pause: ' | Select-Object -Last 1
+          if (-not $line) { "::error::no 'Fullscreen pause:' line in $f"; exit 1 }
+          $line.Line
+          Select-String -Path $f -Pattern '^  (before|during|after): |overlay (hidden|back) after|^  FAIL: ' | ForEach-Object { $_.Line }
+          if ($line.Line -notmatch '^Fullscreen pause: PASS') { "::error::$($line.Line)"; exit 1 }
+
+      - name: Resource check (3 min of snowfall, clean shutdown)
+        # Software rendering (WARP, no GPU) on the VM, so CPU here is an upper bound.
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          Add-Type -Namespace W -Name U -MemberDefinition '[DllImport("user32.dll")] public static extern uint GetGuiResources(System.IntPtr h, uint f);'
+          $p = Start-Process dist\DesktopSnow.exe -ArgumentList '--instance','ci','--no-persist' -PassThru
+          Start-Sleep 10
+          $p.Refresh(); $c0 = $p.TotalProcessorTime; $t0 = Get-Date
+          $cores = [Environment]::ProcessorCount
+          "cores: $cores"
+          for ($i = 0; $i -le 6; $i++) {
+            if ($i -gt 0) { Start-Sleep 30 }
+            $p.Refresh()
+            "t={0,3}s handles={1} gdi={2} user={3} private={4:N1}MB ws={5:N1}MB" -f ($i * 30 + 10), $p.HandleCount, [W.U]::GetGuiResources($p.Handle, 0), [W.U]::GetGuiResources($p.Handle, 1), ($p.PrivateMemorySize64/1MB), ($p.WorkingSet64/1MB)
+          }
+          $p.Refresh(); $c1 = $p.TotalProcessorTime; $t1 = Get-Date
+          $pct = ($c1 - $c0).TotalSeconds / ($t1 - $t0).TotalSeconds * 100
+          "CPU: {0:N1}% of one core = {1:N2}% of the machine" -f $pct, ($pct / $cores)
+          [System.Threading.EventWaitHandle]::OpenExisting('Local\DesktopSnow.ci.Quit').Set() | Out-Null
+          if ($p.WaitForExit(10000)) { "clean exit, code $($p.ExitCode)" } else { "did not exit within 10 s"; Stop-Process $p; exit 1 }
+          Get-Content "$env:LOCALAPPDATA\DesktopSnow\logs\ci.log" -Tail 25
+
+      - name: Collect CI results
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force ci-results | Out-Null
+          if ($env:PKG -and (Test-Path $env:PKG)) {
+            foreach ($f in 'SnowHarness-results.txt', 'DesktopSnow-log.txt') {
+              $p = Join-Path $env:PKG $f
+              if (Test-Path $p) { Copy-Item $p ci-results }
+            }
+            $raw = Join-Path $env:PKG 'harness-results'
+            if (Test-Path $raw) { Copy-Item -Recurse $raw ci-results }
+          }
+
+      - name: Upload CI results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-harness-results-${{ steps.build.outputs.short }}
+          path: ci-results/
+          if-no-files-found: warn
+
+  core-linux:
+    # Portable core (pile model, scatter, settings) + MinGW cross-compile of the app.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ninja-build mingw-w64
+      - name: Core unit tests
+        run: |
+          cmake -S . -B build/linux -G Ninja -DCMAKE_BUILD_TYPE=Debug -DSNOW_WARNINGS_AS_ERRORS=ON
+          cmake --build build/linux
+          ./build/linux/bin/snow_tests
+      - name: MinGW cross-compile (app + harness)
+        run: |
+          cmake -S . -B build/mingw -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64.cmake -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/mingw

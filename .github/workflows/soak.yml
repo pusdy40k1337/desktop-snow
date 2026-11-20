@@ -1,0 +1,50 @@
+name: soak
+
+# Long resource run on demand (Actions -> soak -> Run workflow). Samples handles,
+# GDI/USER objects and memory of a running DesktopSnow.exe while windows open,
+# move and close around it, then prints the overlay's per-minute pacing lines.
+on:
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: "Duration in minutes"
+        default: "25"
+
+jobs:
+  soak:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Build
+        shell: cmd
+        run: build.cmd -Config Release -NoTests
+      - name: Soak
+        shell: pwsh
+        run: |
+          Add-Type -Namespace W -Name U -MemberDefinition '[DllImport("user32.dll")] public static extern uint GetGuiResources(System.IntPtr h, uint f);'
+          $minutes = [int]("${{ github.event.inputs.minutes }}" -replace "^$", "25")
+          $p = Start-Process dist\DesktopSnow.exe -ArgumentList '--instance','soak','--no-persist' -PassThru
+          Start-Sleep 10
+          $p.Refresh(); $c0 = $p.TotalProcessorTime; $t0 = Get-Date
+          for ($m = 0; $m -le $minutes; $m++) {
+            if ($m -gt 0) {
+              # Churn: open, move and close a few windows so piles are created and destroyed.
+              for ($k = 0; $k -lt 3; $k++) {
+                $n = Start-Process notepad -PassThru
+                Start-Sleep 5
+                Stop-Process $n -ErrorAction SilentlyContinue
+              }
+              Start-Sleep 45
+            }
+            $p.Refresh()
+            "min={0,3} handles={1} gdi={2} user={3} private={4:N1}MB ws={5:N1}MB threads={6}" -f $m, $p.HandleCount, [W.U]::GetGuiResources($p.Handle, 0), [W.U]::GetGuiResources($p.Handle, 1), ($p.PrivateMemorySize64/1MB), ($p.WorkingSet64/1MB), $p.Threads.Count
+          }
+          $p.Refresh(); $c1 = $p.TotalProcessorTime; $t1 = Get-Date
+          "CPU: {0:N1}% of one core" -f (($c1 - $c0).TotalSeconds / ($t1 - $t0).TotalSeconds * 100)
+          [System.Threading.EventWaitHandle]::OpenExisting('Local\DesktopSnow.soak.Quit').Set() | Out-Null
+          if ($p.WaitForExit(10000)) { "clean exit, code $($p.ExitCode)" } else { "did not exit"; Stop-Process $p; exit 1 }
+          "--- overlay log: per-minute pacing and fullscreen lines ---"
+          Get-Content "$env:LOCALAPPDATA\DesktopSnow\logs\soak.log" | Select-String 'engine: |fullscreen:|CRASH|device lost' | ForEach-Object { $_.Line }

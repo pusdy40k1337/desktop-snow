@@ -1,9 +1,19 @@
-# зависимости и сборка
-node_modules/
-dist/
-release/
+# build output
 build/
+dist/
+dist-debug/
+harness-results/
+/out/
 
-# мусор ОС и редакторов
+# editors / OS
+.vs/
+.vscode/
+*.user
 .DS_Store
 *.log
+
+# frozen macOS reference (Electron)
+reference/macos-electron/node_modules/
+reference/macos-electron/dist/
+reference/macos-electron/release/
+reference/macos-electron/build/
