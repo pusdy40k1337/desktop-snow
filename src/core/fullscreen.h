@@ -61,6 +61,9 @@ struct PauseDecision {
 //  - always-on-top and floating windows that cover neither (picture-in-picture,
 //    player controls) are looked through;
 //  - any other window on top -> None: the user is working there.
+// A window that fills the monitor *below* the top one keeps Fullscreen: opening
+// WinRAR or a file dialog over a fullscreen Chrome/video must not resume the
+// snow (rule "covers the monitor (under the top window)").
 // The shell's presentation mode pauses every monitor; exclusive-mode D3D pauses
 // the foreground window's monitor (all of them when that is unknown).
 std::vector<PauseDecision> DecidePause(const std::vector<FsMonitor>& monitors, const std::vector<FsWindow>& windows,

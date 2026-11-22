@@ -38,6 +38,13 @@ PauseDecision Decide(PauseReason reason, const char* rule, int window, const Pau
   return d;
 }
 
+// A window that fills the monitor (F11 browser, video player, game) but keeps a
+// normal title bar inside the work area is just a maximised window: only it
+// reaching the monitor edges (no taskbar, borderless) makes it "fullscreen".
+bool OrdinaryMaximised(const FsWindow& w, const FsMonitor& m, int tol) {
+  return w.zoomed && w.captioned && Within(w.frame, m.work, tol);
+}
+
 }  // namespace
 
 const char* PauseReasonName(PauseReason r) {
@@ -73,6 +80,32 @@ std::vector<PauseDecision> DecidePause(const std::vector<FsMonitor>& monitors, c
   for (size_t i = 0; i < monitors.size(); ++i) {
     if (decided[i]) continue;
     const FsMonitor& m = monitors[i];
+    // Pass 1: is something fullscreen *anywhere* on this monitor? The user who
+    // opens a small window (WinRAR, a file dialog) over a fullscreen Chrome or
+    // video is still inside that fullscreen app: the snow must stay paused.
+    int topIdx = -1;
+    for (size_t k = 0; k < windows.size(); ++k) {
+      const FsWindow& w = windows[k];
+      RectI x = w.frame.intersect(m.rect);
+      if (x.width() < kMinOverlap || x.height() < kMinOverlap) continue;
+      topIdx = static_cast<int>(k);
+      break;
+    }
+    int heldIdx = -1;
+    for (size_t k = 0; k < windows.size(); ++k) {
+      if (static_cast<int>(k) == topIdx) continue;
+      const FsWindow& w = windows[k];
+      RectI x = w.frame.intersect(m.rect);
+      if (x.width() < kMinOverlap || x.height() < kMinOverlap) continue;
+      if (Covers(w.frame, m.rect, kCoverTolerance) && !OrdinaryMaximised(w, m, kCoverTolerance)) {
+        heldIdx = static_cast<int>(k);
+        break;
+      }
+    }
+    if (heldIdx >= 0) {
+      out[i] = Decide(PauseReason::Fullscreen, "covers the monitor (under the top window)", heldIdx, options);
+      continue;
+    }
     for (size_t k = 0; k < windows.size(); ++k) {
       const FsWindow& w = windows[k];
       RectI x = w.frame.intersect(m.rect);
@@ -80,7 +113,7 @@ std::vector<PauseDecision> DecidePause(const std::vector<FsMonitor>& monitors, c
       // The shell's own "busy" verdict tolerates apps that stop a little further short.
       int tol = kCoverTolerance + (w.foreground && shell == ShellNotifyState::Busy ? 2 : 0);
       int idx = static_cast<int>(k);
-      bool ordinaryMaximised = w.zoomed && w.captioned && Within(w.frame, m.work, tol);
+      bool ordinaryMaximised = OrdinaryMaximised(w, m, tol);
       if (Covers(w.frame, m.rect, tol) && !ordinaryMaximised) {
         out[i] = Decide(PauseReason::Fullscreen, "covers the monitor", idx, options);
         break;

@@ -214,6 +214,32 @@ TEST(pause_topmost_fullscreen_window) {
   CHECK(Decide1({tm, editor}).reason == PauseReason::Maximized);
 }
 
+TEST(pause_fullscreen_holds_under_a_small_window) {
+  // Chrome in F11 fullscreen, then the user opens WinRAR on top of it: the snow
+  // must stay paused (the fullscreen app is still what fills the monitor).
+  FsWindow chrome = Fw(kM1);
+  FsWindow winrar = Fw(RectI(300, 200, 1200, 800));
+  winrar.foreground = true;
+  PauseDecision d = Decide1({winrar, chrome});
+  CHECK(d.pause && d.reason == PauseReason::Fullscreen);
+  CHECK(d.window == 1);
+  CHECK(std::string(d.rule) == "covers the monitor (under the top window)");
+  // The fullscreen pause switched off: reported, but no pause.
+  PauseOptions off;
+  off.fullscreen = false;
+  d = Decide1({winrar, chrome}, off);
+  CHECK(!d.pause && d.reason == PauseReason::Fullscreen);
+  // A merely maximised window under the small one is not enough: the user works
+  // in the window on top, the desktop is still visible around it.
+  FsWindow maximised = Fw(kW1);
+  maximised.zoomed = maximised.captioned = true;
+  CHECK(Decide1({winrar, maximised}).reason == PauseReason::None);
+  // A video player that stops a few pixels short of the monitor edge is not held
+  // either (borderless maximised windows look like that).
+  FsWindow shortBy10 = Fw(RectI(0, 0, 1920, 1070));
+  CHECK(Decide1({winrar, shortBy10}).reason == PauseReason::None);
+}
+
 TEST(pause_second_monitor_with_other_dpi) {
   // Monitor 2: 2560x1440 at 150 %, right of monitor 1, its own taskbar.
   const RectI m2(1920, 0, 4480, 1440), w2(1920, 0, 4480, 1392);
