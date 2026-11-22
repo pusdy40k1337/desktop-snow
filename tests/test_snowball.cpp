@@ -13,7 +13,7 @@ PileModel MakePile(float width, float height) {
   PileModel pile(width, p);
   for (int i = 0; i < pile.columns(); ++i) {
     // PileModel has no setter; deposit the exact mass column by column.
-    pile.deposit(pile.columnCenter(i), height * p.columnStep, nullptr);
+    pile.deposit(pile.columnCenter(i), height, nullptr);  // kernel sums to ~1 per column
   }
   return pile;
 }
