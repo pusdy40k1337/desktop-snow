@@ -142,6 +142,12 @@ void App::PushConfig() {
     cfg.hiddenMonitors.clear();
   }
   engine_.SetConfig(cfg);
+  // Keep the decorate layer above everything (the snow overlay may be shown or
+  // re-stacked by the engine thread at any moment).
+  if (decorate_) {
+    for (HWND h : catchers_)
+      SetWindowPos(h, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+  }
 }
 
 void App::PushDecor() { engine_.SetDecor(state_.decor); }
@@ -709,7 +715,7 @@ void App::EnterDecorate() {
     if (!h) continue;
     // A faint dim marks the mode and makes the whole screen clickable.
     SetLayeredWindowAttributes(h, 0, 48, LWA_ALPHA);
-    HWND above = i < overlays.size() ? overlays[i] : HWND_TOPMOST;
+    HWND above = (i < overlays.size() && IsWindowVisible(overlays[i])) ? overlays[i] : HWND_TOPMOST;
     SetWindowPos(h, above, r.left, r.top, r.width(), r.height(), SWP_SHOWWINDOW);
     catchers_.push_back(h);
   }

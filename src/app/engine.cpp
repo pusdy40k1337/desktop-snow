@@ -640,7 +640,10 @@ void Engine::Impl::ApplyVisibility() {
   for (auto& ov : overlays) {
     bool fullscreen =
         std::find(c.hiddenMonitors.begin(), c.hiddenMonitors.end(), ov.device) != c.hiddenMonitors.end();
-    bool want = !c.paused && !fullscreen;
+    bool blocked = c.paused || fullscreen;
+    // Decorating needs the palette and the decorations on screen even when the
+    // snow itself is paused (maximised browser, fullscreen app).
+    bool want = c.decorateMode || !blocked;
     if (want == ov.shown) continue;
     changed = true;
     if (!want) {
@@ -665,8 +668,13 @@ void Engine::Impl::ApplyVisibility() {
   }
   if (changed) {
     // Paused monitors spawn no snow and freeze their flakes (same order as `monitors`).
+    // Decorating a paused monitor shows the overlay but keeps the snow frozen.
     std::vector<uint8_t> paused(overlays.size());
-    for (size_t i = 0; i < overlays.size(); ++i) paused[i] = overlays[i].shown ? 0 : 1;
+    for (size_t i = 0; i < overlays.size(); ++i) {
+      bool fullscreen =
+          std::find(c.hiddenMonitors.begin(), c.hiddenMonitors.end(), overlays[i].device) != c.hiddenMonitors.end();
+      paused[i] = (c.paused || fullscreen) ? 1 : 0;
+    }
     world.setPausedMonitors(paused);
     PublishOverlayState();
   }
