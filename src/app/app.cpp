@@ -1083,10 +1083,22 @@ LRESULT App::HandleCatcher(HWND h, UINT m, WPARAM w, LPARAM l) {
       SetCursor(LoadCursorW(nullptr, hoverId_ ? IDC_HAND : IDC_CROSS));
       return TRUE;
     case WM_KEYDOWN:
-      if (w == VK_ESCAPE) ExitDecorate();
+      if (w == VK_ESCAPE) {
+        if (colorPopup_.open) {
+          colorPopup_.open = false;
+          PushConfig();
+        } else {
+          ExitDecorate();
+        }
+      }
       return 0;
     case WM_RBUTTONUP:
-      ExitDecorate();
+      if (colorPopup_.open) {
+        colorPopup_.open = false;
+        PushConfig();
+      } else {
+        ExitDecorate();
+      }
       return 0;
     case WM_LBUTTONDOWN:
     case WM_MOUSEMOVE:
@@ -1108,6 +1120,7 @@ LRESULT App::HandleCatcher(HWND h, UINT m, WPARAM w, LPARAM l) {
             ApplyPickerColor(sw);
             colorPopup_.open = false;
             PushConfig();
+            swallowUp_ = true;
             return 0;
           }
           colorPopup_.open = false;  // click outside closes it; the click continues
@@ -1125,6 +1138,7 @@ LRESULT App::HandleCatcher(HWND h, UINT m, WPARAM w, LPARAM l) {
             PushDecor();
             PushConfig();
           }
+          swallowUp_ = true;
           return 0;
         }
         std::vector<DecorLayoutItem> layout;
@@ -1218,6 +1232,12 @@ LRESULT App::HandleCatcher(HWND h, UINT m, WPARAM w, LPARAM l) {
       }
       // WM_LBUTTONUP
       ReleaseCapture();
+      if (swallowUp_) {
+        swallowUp_ = false;
+        pressed_ = dragging_ = false;
+        dragKind_ = DragKind::None;
+        return 0;
+      }
       bool wasDrag = dragging_;
       pressed_ = dragging_ = false;
       dragKind_ = DragKind::None;

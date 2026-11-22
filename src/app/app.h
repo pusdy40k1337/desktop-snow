@@ -119,6 +119,7 @@ class App {
   std::vector<HWND> catchers_;
   uint32_t hoverId_ = 0;
   bool dragging_ = false, pressed_ = false;
+  bool swallowUp_ = false;  // the press was consumed by the toolbar/picker: ignore its release
   enum class DragKind { None = 0, Tree, Snowman, Free };
   DragKind dragKind_ = DragKind::None;
   uint32_t dragId_ = 0;
