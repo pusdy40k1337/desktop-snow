@@ -30,7 +30,7 @@ enum : UINT {
   ID_QUIT,
 };
 
-enum : UINT_PTR { T_FULLSCREEN = 1, T_SAVE, T_MONITORS, T_SLOW, T_TOPMOST, T_QUIT_AFTER, T_FS_DEBOUNCE, T_PAUSE_HOUR };
+enum : UINT_PTR { T_FULLSCREEN = 1, T_SAVE, T_MONITORS, T_SLOW, T_TOPMOST, T_QUIT_AFTER, T_FS_DEBOUNCE, T_PAUSE_HOUR, T_TRAIN_NOW };
 constexpr UINT HK_TOGGLE = 1, HK_DECORATE = 2;
 constexpr UINT WM_APP_SECOND_INSTANCE = WM_APP + 10;
 constexpr size_t kDiagHistory = 200;  // decision changes kept for "Copy diagnostics"
@@ -1448,6 +1448,11 @@ LRESULT App::Handle(HWND h, UINT m, WPARAM w, LPARAM l) {
           KillTimer(hwnd_, T_TOPMOST);
           engine_.Command(EngineCommand::ReassertTopmost);
           break;
+        case T_TRAIN_NOW:
+          KillTimer(hwnd_, T_TRAIN_NOW);
+          engine_.Command(EngineCommand::Train);
+          Log("debug: gift train requested (--train-now)");
+          break;
         case T_QUIT_AFTER:
           DestroyWindow(hwnd_);
           break;
@@ -1598,6 +1603,7 @@ int App::Run(const LaunchOptions& opts) {
   CheckFullscreen(true);
   SetTimer(hwnd_, T_FULLSCREEN, 500, nullptr);
   SetTimer(hwnd_, T_SLOW, 30000, nullptr);
+  if (opts_.trainNow) SetTimer(hwnd_, T_TRAIN_NOW, 2000, nullptr);
   if (!opts_.harness && !opts_.noPersist && state_.decor.trees.empty() && state_.decor.snowmen.empty() &&
       !store_->file().empty()) {
     // First run: nothing to configure, just a hint where the menu lives.

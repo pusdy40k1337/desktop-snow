@@ -60,6 +60,7 @@ void PrintUsage() {
       "  --no-persist         do not write the state file\n"
       "  --harness            measurement mode used by SnowHarness.exe\n"
       "  --diagnostics        log the pause decision of every monitor every 0.5 s\n"
+      "  --train-now          send the gift train once, about two seconds after start\n"
       "  --quit-after <s>     exit after <s> seconds\n"
       "  --render-decor <dir> render every decoration and visitor with Direct2D into\n"
       "                       <dir>\\decor-<theme>.png and exit\n"
@@ -82,6 +83,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     else if (a == L"--render-decor") renderDecorDir = next();
     else if (a == L"--render-settings") renderSettingsDir = next();
     else if (a == L"--diagnostics") opts.diagnostics = true;
+    else if (a == L"--train-now") opts.trainNow = true;
     else if (a == L"--quit-after") opts.quitAfter = _wtoi(next().c_str());
     else if (a == L"--console") opts.console = true;
     else if (a == L"--harness") {

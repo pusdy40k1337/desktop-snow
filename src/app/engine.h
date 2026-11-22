@@ -23,6 +23,7 @@ struct LaunchOptions {
   std::wstring telemetryPath; // per-frame CSV (window vs pile)
   std::wstring logPath;       // --log: append the log here instead of %LOCALAPPDATA%\DesktopSnow\logs
   bool diagnostics = false;   // --diagnostics: log every pause decision every 0.5 s
+  bool trainNow = false;      // --train-now: send the gift train once, ~2 s after start
   int quitAfter = 0;          // --quit-after <s>: exit after this many seconds (0 = never)
   std::string syncOverride;   // "latch" | "vsync" | ""
   int predictOverride = -1;   // -1 = settings, 0 off, 1 on
