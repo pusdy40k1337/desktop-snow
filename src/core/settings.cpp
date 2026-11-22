@@ -40,6 +40,10 @@ void Sanitize(Settings& s) {
   if (!themeOk) s.theme = "classic";
   if (s.hotkeyToggle.size() > 40) s.hotkeyToggle = "Ctrl+Alt+S";
   if (s.hotkeyDecorate.size() > 40) s.hotkeyDecorate = "Ctrl+Alt+D";
+  if (s.decorColor < 0) s.decorColor = -1;
+  else s.decorColor = std::clamp(s.decorColor, 0, 63);
+  s.paletteLeft = std::clamp(s.paletteLeft, -20000, 20000);
+  s.paletteTop = std::clamp(s.paletteTop, -20000, 20000);
   {
     std::vector<std::string> mons;
     for (const auto& id : s.disabledMonitors)
@@ -179,6 +183,9 @@ Value ToJson(const AppState& st) {
   }
   set.set("hotkeyToggle", s.hotkeyToggle);
   set.set("hotkeyDecorate", s.hotkeyDecorate);
+  set.set("decorColor", s.decorColor);
+  set.set("paletteLeft", s.paletteLeft);
+  set.set("paletteTop", s.paletteTop);
 
   Value snow = Value::object();
   snow.set("density", s.snow.density);
@@ -224,6 +231,7 @@ Value ToJson(const AppState& st) {
   ex.set("dayNightTint", s.extras.dayNightTint);
   ex.set("santa", s.extras.santa);
   ex.set("train", s.extras.train);
+  ex.set("trainKnocks", s.extras.trainKnocksSnowmen);
   ex.set("yeti", s.extras.yeti);
   set.set("extras", ex);
   root.set("settings", set);
@@ -336,6 +344,9 @@ void FromJson(const Value& root, AppState& st) {
     }
     rd(set, "hotkeyToggle", s.hotkeyToggle);
     rd(set, "hotkeyDecorate", s.hotkeyDecorate);
+    rd(set, "decorColor", s.decorColor);
+    rd(set, "paletteLeft", s.paletteLeft);
+    rd(set, "paletteTop", s.paletteTop);
     const Value& snow = set["snow"];
     rd(snow, "density", s.snow.density);
     rd(snow, "windSpeed", s.snow.windSpeed);
@@ -372,6 +383,7 @@ void FromJson(const Value& root, AppState& st) {
     rd(ex, "dayNightTint", s.extras.dayNightTint);
     rd(ex, "santa", s.extras.santa);
     rd(ex, "train", s.extras.train);
+    rd(ex, "trainKnocks", s.extras.trainKnocksSnowmen);
     rd(ex, "yeti", s.extras.yeti);
   }
 

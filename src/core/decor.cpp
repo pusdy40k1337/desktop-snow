@@ -70,7 +70,7 @@ int AnchorMatchScore(const WindowAnchor& a, const WindowIdentity& w) {
   return std::max(0, score);
 }
 
-PaletteLayout LayoutPalette(const RectI& work, float dpiScale) {
+PaletteLayout LayoutPalette(const RectI& work, float dpiScale, int left, int top) {
   PaletteLayout l;
   const int count = static_cast<int>(Tool::Count);
   float btnW = 66.f * dpiScale, btnH = 60.f * dpiScale, gap = 6.f * dpiScale, pad = 10.f * dpiScale;
@@ -84,15 +84,31 @@ PaletteLayout LayoutPalette(const RectI& work, float dpiScale) {
     pad *= k;
     total = avail;
   }
-  int left = work.left + static_cast<int>((work.width() - total) / 2);
-  int top = work.top + static_cast<int>(16.f * dpiScale);
-  l.bar = RectI(left, top, left + static_cast<int>(total), top + static_cast<int>(btnH + 2 * pad));
+  int barLeft = work.left + static_cast<int>((work.width() - total) / 2);
+  int barTop = work.top + static_cast<int>(16.f * dpiScale);
+  if (left >= 0 && top >= 0) {
+    barLeft = left;
+    barTop = top;
+  }
+  RectI raw(barLeft, barTop, barLeft + static_cast<int>(total), barTop + static_cast<int>(btnH + 2 * pad));
+  l.bar = ClampPaletteRect(raw, work);
+  barLeft = l.bar.left;
+  barTop = l.bar.top;
   for (int i = 0; i < count; ++i) {
-    int x = left + static_cast<int>(pad + i * (btnW + gap));
-    int y = top + static_cast<int>(pad);
+    int x = barLeft + static_cast<int>(pad + i * (btnW + gap));
+    int y = barTop + static_cast<int>(pad);
     l.buttons.push_back({static_cast<Tool>(i), RectI(x, y, x + static_cast<int>(btnW), y + static_cast<int>(btnH))});
   }
   return l;
+}
+
+RectI ClampPaletteRect(RectI bar, const RectI& work) {
+  const int w = bar.width(), h = bar.height();
+  const int maxLeft = std::max(work.left, work.right - w);
+  const int maxTop = std::max(work.top, work.bottom - h);
+  const int left = std::min(std::max(bar.left, work.left), maxLeft);
+  const int top = std::min(std::max(bar.top, work.top), maxTop);
+  return RectI(left, top, left + w, top + h);
 }
 
 bool PaletteHit(const PaletteLayout& layout, int x, int y, Tool& out) {
@@ -103,6 +119,24 @@ bool PaletteHit(const PaletteLayout& layout, int x, int y, Tool& out) {
     }
   }
   return false;
+}
+
+bool PaletteUiHit(const PaletteLayout& layout, int x, int y, int margin) {
+  return x >= layout.bar.left - margin && x < layout.bar.right + margin && y >= layout.bar.top - margin &&
+         y < layout.bar.bottom + margin;
+}
+
+RectI HintRect(const RectI& work, const RectI& bar, float dpiScale) {
+  const float w = std::min(720.f * dpiScale, static_cast<float>(work.width()) - 40.f * dpiScale);
+  const float h = 46.f * dpiScale;
+  const float x = static_cast<float>(work.left) + (static_cast<float>(work.width()) - w) / 2.f;
+  const bool topHalf = bar.top < work.top + work.height() / 2;
+  const float y = topHalf ? static_cast<float>(bar.bottom) + 8.f * dpiScale : static_cast<float>(bar.top) - h - 8.f * dpiScale;
+  RectI r(static_cast<int>(x), static_cast<int>(y), static_cast<int>(x + w), static_cast<int>(y + h));
+  // Never leave the work area (the bar can be dragged to the very bottom).
+  const int top = std::min(std::max(r.top, work.top), std::max(work.top, work.bottom - r.height()));
+  const int left = std::min(std::max(r.left, work.left), std::max(work.left, work.right - r.width()));
+  return RectI(left, top, left + r.width(), top + r.height());
 }
 
 uint32_t DecorColorRgb(int index) {
@@ -166,15 +200,20 @@ ColorPickerLayout LayoutColorPicker(int anchorX, int anchorY, const RectI& work,
   return l;
 }
 
-int ColorPickerHit(const ColorPickerLayout& layout, int x, int y) {
+int ColorPickerHit(const ColorPickerLayout& layout, int x, int y, int margin) {
   for (size_t i = 0; i < layout.swatches.size(); ++i) {
     const RectI& r = layout.swatches[i];
     const int cx = (r.left + r.right) / 2, cy = (r.top + r.bottom) / 2;
-    const int rad = (r.right - r.left) / 2 + 2;
+    const int rad = (r.right - r.left) / 2 + 2 + margin;
     const int dx = x - cx, dy = y - cy;
     if (dx * dx + dy * dy <= rad * rad) return static_cast<int>(i);
   }
   return -1;
+}
+
+bool ColorPickerUiHit(const ColorPickerLayout& layout, int x, int y, int margin) {
+  return x >= layout.bar.left - margin && x < layout.bar.right + margin && y >= layout.bar.top - margin &&
+         y < layout.bar.bottom + margin;
 }
 
 }  // namespace snow

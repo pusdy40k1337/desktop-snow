@@ -120,6 +120,10 @@ class App {
   uint32_t hoverId_ = 0;
   bool dragging_ = false, pressed_ = false;
   bool swallowUp_ = false;  // the press was consumed by the toolbar/picker: ignore its release
+  // Toolbar drag (the whole bar can be pulled around the work area).
+  bool paletteDrag_ = false;
+  float paletteGrabX_ = 0, paletteGrabY_ = 0;
+  RectI paletteBar_{};  // bar rect at the moment the drag started
   enum class DragKind { None = 0, Tree, Snowman, Free };
   DragKind dragKind_ = DragKind::None;
   uint32_t dragId_ = 0;

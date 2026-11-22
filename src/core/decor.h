@@ -120,12 +120,24 @@ std::string NormalizeTitle(const std::string& title);
 enum class Tool : int { Tree = 0, Bauble, Lights, CandyCane, Star, Snowman, Hat, Scarf, Erase, Done, Count };
 struct PaletteButton { Tool tool; RectI rect; };
 struct PaletteLayout { RectI bar; std::vector<PaletteButton> buttons; };
-PaletteLayout LayoutPalette(const RectI& monitorWork, float dpiScale);
+// left/top: absolute position of the bar; -1 (or anything off-screen) keeps the
+// default centred-at-the-top spot. The bar is always kept fully inside `work`.
+PaletteLayout LayoutPalette(const RectI& monitorWork, float dpiScale, int left = -1, int top = -1);
 bool PaletteHit(const PaletteLayout& layout, int x, int y, Tool& out);
+// The toolbar grabs the mouse as a whole: buttons, the frame around them and a
+// few pixels of slack. Everything inside this rect must be swallowed.
+bool PaletteUiHit(const PaletteLayout& layout, int x, int y, int margin = 6);
+// Drag: where the bar should end up when its top-left is pulled to (left, top).
+RectI ClampPaletteRect(RectI bar, const RectI& monitorWork);
+// The hint plate under (bar in the upper half of the screen) or above the bar.
+RectI HintRect(const RectI& monitorWork, const RectI& bar, float dpiScale);
 
 // Colour picker popup for hats/scarves (anchored at the click point).
 struct ColorPickerLayout { RectI bar; std::vector<RectI> swatches; };
 ColorPickerLayout LayoutColorPicker(int anchorX, int anchorY, const RectI& monitorWork, float dpiScale);
-int ColorPickerHit(const ColorPickerLayout& layout, int x, int y);  // -1 = miss
+// `margin` grows every swatch by that many px (the popup is a UI element: a
+// near miss inside its frame must not fall through to the canvas).
+int ColorPickerHit(const ColorPickerLayout& layout, int x, int y, int margin = 0);  // -1 = miss
+bool ColorPickerUiHit(const ColorPickerLayout& layout, int x, int y, int margin = 6);
 
 }  // namespace snow

@@ -125,6 +125,8 @@ void App::PushConfig() {
   cfg.decorateMode = decorate_;
   cfg.activeTool = tool_;
   cfg.hoverId = hoverId_;
+  cfg.paletteLeft = state_.settings.paletteLeft;
+  cfg.paletteTop = state_.settings.paletteTop;
   cfg.pickerOpen = colorPopup_.open;
   cfg.pickerX = colorPopup_.at.x;
   cfg.pickerY = colorPopup_.at.y;
@@ -829,6 +831,9 @@ void App::ApplyPickerColor(int index) {
       if (f.id == colorPopup_.freeId) f.color = c;
   }
   colorPopup_.selected = c;
+  // The chosen colour also sticks for the next hats/scarves the user places.
+  state_.settings.decorColor = c;
+  PushConfig();
   PushDecor();
   ScheduleSave();
 }
@@ -984,8 +989,10 @@ void App::DecorClick(POINT pt) {
         s.nx = clampf((baseX - static_cast<float>(work.left)) / static_cast<float>(std::max(1, work.width())), 0.f, 1.f);
         s.ny = clampf((baseY - static_cast<float>(work.top)) / static_cast<float>(std::max(1, work.height())), 0.f, 1.f);
         s.hat = 1;
-        s.hatColor = colorCycle_ % kDecorColorCount;
-        s.scarf = colorCycle_++ % kDecorColorCount;
+        s.hatColor = state_.settings.decorColor >= 0 ? state_.settings.decorColor % kDecorColorCount
+                                                     : colorCycle_ % kDecorColorCount;
+        s.scarf = state_.settings.decorColor >= 0 ? state_.settings.decorColor % kDecorColorCount
+                                                  : colorCycle_++ % kDecorColorCount;
         d.snowmen.push_back(s);
         changed = true;
       }
@@ -1001,9 +1008,10 @@ void App::DecorClick(POINT pt) {
         changed = true;
         OpenColorPicker(1, man->id, 0, pt, man->hatColor);
       } else if (!tree) {
-        FreeDecor* f = spawnFree(FreeKind::Hat, colorCycle_ % kDecorColorCount, (colorCycle_ % 3) + 1);
+        const int col = state_.settings.decorColor >= 0 ? state_.settings.decorColor % kDecorColorCount
+                                                        : colorCycle_++ % kDecorColorCount;
+        FreeDecor* f = spawnFree(FreeKind::Hat, col, (colorCycle_ % 3) + 1);
         if (f) {
-          colorCycle_++;
           changed = true;
           OpenColorPicker(3, 0, f->id, pt, f->color);
         }
@@ -1017,7 +1025,9 @@ void App::DecorClick(POINT pt) {
         }
         OpenColorPicker(2, man->id, 0, pt, man->scarf);
       } else if (!tree) {
-        FreeDecor* f = spawnFree(FreeKind::Scarf, colorCycle_++ % kDecorColorCount, 1);
+        const int col = state_.settings.decorColor >= 0 ? state_.settings.decorColor % kDecorColorCount
+                                                        : colorCycle_++ % kDecorColorCount;
+        FreeDecor* f = spawnFree(FreeKind::Scarf, col, 1);
         if (f) {
           changed = true;
           OpenColorPicker(3, 0, f->id, pt, f->color);
@@ -1107,11 +1117,28 @@ LRESULT App::HandleCatcher(HWND h, UINT m, WPARAM w, LPARAM l) {
       GetMonitorInfoW(mon, &mi);
       const RectI work(mi.rcWork.left, mi.rcWork.top, mi.rcWork.right, mi.rcWork.bottom);
       const float dpi = MonitorScale(mon);
+      auto overUi = [&](const PaletteLayout& pl, const RectI& hint) {
+        if (PaletteUiHit(pl, pt.x, pt.y, 6)) return true;
+        return pt.x >= hint.left - 6 && pt.x < hint.right + 6 && pt.y >= hint.top - 6 && pt.y < hint.bottom + 6;
+      };
+      if (m == WM_MOUSEMOVE && paletteDrag_) {
+        const int left = static_cast<int>(pt.x - paletteGrabX_);
+        const int top = static_cast<int>(pt.y - paletteGrabY_);
+        RectI moved(left, top, left + paletteBar_.width(), top + paletteBar_.height());
+        RectI clamped = ClampPaletteRect(moved, work);
+        if (clamped.left != state_.settings.paletteLeft || clamped.top != state_.settings.paletteTop) {
+          state_.settings.paletteLeft = clamped.left;
+          state_.settings.paletteTop = clamped.top;
+          paletteBar_ = clamped;
+          PushConfig();
+        }
+        return 0;
+      }
       if (m == WM_LBUTTONDOWN) {
         // Colour picker first: it floats above everything.
         if (colorPopup_.open) {
           ColorPickerLayout cp = LayoutColorPicker(colorPopup_.at.x, colorPopup_.at.y, work, dpi);
-          const int sw = ColorPickerHit(cp, pt.x, pt.y);
+          const int sw = ColorPickerHit(cp, pt.x, pt.y, 2);
           if (sw >= 0) {
             ApplyPickerColor(sw);
             colorPopup_.open = false;
@@ -1119,22 +1146,41 @@ LRESULT App::HandleCatcher(HWND h, UINT m, WPARAM w, LPARAM l) {
             swallowUp_ = true;
             return 0;
           }
+          if (ColorPickerUiHit(cp, pt.x, pt.y, 6)) {
+            swallowUp_ = true;  // inside the popup frame: keep it open if not on a swatch
+            return 0;
+          }
           colorPopup_.open = false;  // click outside closes it; the click continues
           PushConfig();
         }
-        // Palette next.
-        PaletteLayout pl = LayoutPalette(work, dpi);
-        Tool t;
-        if (PaletteHit(pl, pt.x, pt.y, t)) {
-          if (t == Tool::Done) ExitDecorate();
-          else {
-            RestoreHoverPreview();
-            tool_ = t;
-            hoverId_ = 0;
-            PushDecor();
-            PushConfig();
+        // The toolbar is a UI element: a press on it never reaches the canvas.
+        PaletteLayout pl = LayoutPalette(work, dpi, state_.settings.paletteLeft, state_.settings.paletteTop);
+        const RectI hint = HintRect(work, pl.bar, dpi);
+        if (PaletteUiHit(pl, pt.x, pt.y, 6)) {
+          Tool t;
+          if (PaletteHit(pl, pt.x, pt.y, t)) {
+            if (t == Tool::Done) {
+              ExitDecorate();
+            } else {
+              RestoreHoverPreview();
+              tool_ = t;
+              hoverId_ = 0;
+              PushDecor();
+              PushConfig();
+            }
+          } else {
+            // Free part of the bar (frame / gaps): drag the whole toolbar.
+            paletteDrag_ = true;
+            paletteGrabX_ = static_cast<float>(pt.x - pl.bar.left);
+            paletteGrabY_ = static_cast<float>(pt.y - pl.bar.top);
+            paletteBar_ = pl.bar;
+            SetCapture(h);
           }
           swallowUp_ = true;
+          return 0;
+        }
+        if (overUi(pl, hint) && !PaletteUiHit(pl, pt.x, pt.y, 6)) {
+          swallowUp_ = true;  // the hint plate swallows clicks too
           return 0;
         }
         std::vector<DecorLayoutItem> layout;
@@ -1156,6 +1202,17 @@ LRESULT App::HandleCatcher(HWND h, UINT m, WPARAM w, LPARAM l) {
         return 0;
       }
       if (m == WM_MOUSEMOVE) {
+        PaletteLayout pl = LayoutPalette(work, dpi, state_.settings.paletteLeft, state_.settings.paletteTop);
+        const RectI hint = HintRect(work, pl.bar, dpi);
+        if (overUi(pl, hint)) {
+          if (hoverId_ != 0 || previewActive_) {
+            RestoreHoverPreview();
+            hoverId_ = 0;
+            PushDecor();
+            PushConfig();
+          }
+          return 0;  // no hover ghost / no dragging under the UI
+        }
         if (pressed_ && dragId_ && !dragging_ && (std::abs(pt.x - pressPt_.x) > 4 || std::abs(pt.y - pressPt_.y) > 4)) {
           dragging_ = true;
           RestoreHoverPreview();
@@ -1218,6 +1275,13 @@ LRESULT App::HandleCatcher(HWND h, UINT m, WPARAM w, LPARAM l) {
       }
       // WM_LBUTTONUP
       ReleaseCapture();
+      if (paletteDrag_) {
+        paletteDrag_ = false;
+        pressed_ = dragging_ = false;
+        dragKind_ = DragKind::None;
+        ScheduleSave();
+        return 0;
+      }
       if (swallowUp_) {
         swallowUp_ = false;
         pressed_ = dragging_ = false;

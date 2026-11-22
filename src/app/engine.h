@@ -41,6 +41,9 @@ struct EngineConfig {
   bool decorateMode = false;
   Tool activeTool = Tool::Tree;
   uint32_t hoverId = 0;
+  // Toolbar position (absolute px, -1 = the default top-centre spot).
+  int paletteLeft = -1;
+  int paletteTop = -1;
   // Colour picker popup for hats/scarves (drawing only; hit-testing is in App).
   bool pickerOpen = false;
   int pickerX = 0, pickerY = 0;

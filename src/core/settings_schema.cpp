@@ -92,6 +92,7 @@ std::vector<SchemaItem> BuildItems() {
                       {"golden", UiStr::ThemeGolden}}));
   v.push_back(Make(ItemId::Santa, S::Decorations, K::Toggle, UiStr::SettingSanta, UiStr::DescSanta));
   v.push_back(Make(ItemId::Train, S::Decorations, K::Toggle, UiStr::SettingTrain, UiStr::DescTrain));
+  v.push_back(Make(ItemId::TrainKnocks, S::Decorations, K::Toggle, UiStr::SettingTrainKnocks, UiStr::DescTrainKnocks));
   v.push_back(Make(ItemId::Yeti, S::Decorations, K::Toggle, UiStr::SettingYeti, UiStr::DescYeti));
   v.push_back(Buttons(ItemId::CallNow, S::Decorations, UiStr::SettingCallNow, kNoText,
                       {{"santa", UiStr::BtnSanta}, {"train", UiStr::BtnTrain}, {"yeti", UiStr::BtnYeti}}));
@@ -148,6 +149,7 @@ bool* ToggleField(Settings& s, ItemId id) {
     case ItemId::DayNight: return &s.extras.dayNightTint;
     case ItemId::Santa: return &s.extras.santa;
     case ItemId::Train: return &s.extras.train;
+    case ItemId::TrainKnocks: return &s.extras.trainKnocksSnowmen;
     case ItemId::Yeti: return &s.extras.yeti;
     case ItemId::DebugOverlay: return &s.debugOverlay;
     default: return nullptr;

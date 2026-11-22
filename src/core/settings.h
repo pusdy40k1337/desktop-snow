@@ -51,6 +51,7 @@ struct ExtrasSettings {
   bool dayNightTint = true;
   bool santa = true;
   bool train = true;
+  bool trainKnocksSnowmen = true;
   bool yeti = true;
 };
 
@@ -71,6 +72,11 @@ struct Settings {
   std::vector<std::string> disabledMonitors;  // device names of monitors with snow off, e.g. \\.\DISPLAY2
   std::string hotkeyToggle = "Ctrl+Alt+S";
   std::string hotkeyDecorate = "Ctrl+Alt+D";
+  // Decorate-mode UI: remembered colour and the dragged toolbar position
+  // (absolute virtual-screen pixels, -1 = the default spot).
+  int decorColor = -1;
+  int paletteLeft = -1;
+  int paletteTop = -1;
   SnowSettings snow;
   PileSettings piles;
   ScatterSettings scatter;

@@ -1,5 +1,7 @@
 #include "engine.h"
 
+#include "../core/knock.h"
+
 #include <d3d11.h>
 #include <dcomp.h>
 #include <dwmapi.h>
@@ -193,6 +195,13 @@ struct Engine::Impl {
   std::vector<const TrackedWindow*> inputSrc;
   std::vector<SnowmanDraw> snowmenDraw;
   std::vector<DecorLayoutItem> layoutLocal;
+  // Train hit: snowman id -> (time of the hit, train direction). The tumble math
+  // is in core/knock.h; entries vanish when the snowman is back on its feet.
+  struct KnockRun {
+    double t0 = 0;
+    int dir = 1;
+  };
+  std::unordered_map<uint32_t, KnockRun> knockedAt;
   std::vector<HWND> destroyedTmp;
 
   HANDLE timer = nullptr;
@@ -1587,7 +1596,7 @@ void Engine::Impl::EnsureLabels() {
 
 bool Engine::Impl::DrawDecorateUi(const Overlay& ov) {
   EnsureLabels();
-  PaletteLayout pal = LayoutPalette(ov.work, ov.scale);
+  PaletteLayout pal = LayoutPalette(ov.work, ov.scale, c.paletteLeft, c.paletteTop);
   const wchar_t* labels[static_cast<int>(Tool::Count)];
   for (int i = 0; i < static_cast<int>(Tool::Count); ++i) labels[i] = toolLabels[static_cast<size_t>(i)].c_str();
   gfx::DecorFrame f;
@@ -1604,10 +1613,9 @@ bool Engine::Impl::DrawDecorateUi(const Overlay& ov) {
   }
   IDWriteTextFormat* hf = Format(fmtHint, L"Segoe UI", 13.f, ov.scale, false);
   if (hf) {
-    float w = std::min(720.f * ov.scale, static_cast<float>(ov.work.width()) - 40.f);
-    float x = static_cast<float>(ov.work.left) + (ov.work.width() - w) / 2.f;
-    float y = static_cast<float>(pal.bar.bottom) + 8.f * ov.scale;
-    D2D1_RECT_F box = D2D1::RectF(x, y, x + w, y + 46.f * ov.scale);
+    const RectI hint = HintRect(ov.work, pal.bar, ov.scale);
+    D2D1_RECT_F box = D2D1::RectF(static_cast<float>(hint.left), static_cast<float>(hint.top),
+                                  static_cast<float>(hint.right), static_cast<float>(hint.bottom));
     dc->FillRoundedRectangle(D2D1::RoundedRect(box, 8 * ov.scale, 8 * ov.scale), brush(D2D1::ColorF(0, 0, 0, 0.6f)));
     box.left += 12 * ov.scale;
     box.right -= 12 * ov.scale;
@@ -1683,18 +1691,46 @@ bool Engine::Impl::RenderOverlay(Overlay& ov, const FrameTiming& ft) {
         content = true;
       }
     }
+    // Train hit box: snowmen standing on the rails get knocked flying. The
+    // check is geometric (core/knock.h) and runs before the drawing loop.
+    if (c.settings.extras.train && c.settings.extras.trainKnocksSnowmen && actors.train().active) {
+      const TrainState& tr = actors.train();
+      TrainHitBox hb;
+      hb.frontX = tr.x;
+      hb.length = tr.length;
+      hb.dir = tr.dir;
+      hb.groundY = tr.groundY;
+      for (const auto& dr : snowmenDraw) {
+        if (knockedAt.find(dr.sm->id) != knockedAt.end()) continue;
+        if (!TrainHitsSnowman(hb, dr.base.x, dr.base.y)) continue;
+        knockedAt[dr.sm->id] = KnockRun{now, tr.dir};
+      }
+    }
     auto drawSnowmenOn = [&](uint64_t surfaceId) {
       for (const auto& dr : snowmenDraw) {
         if (dr.surfaceId != surfaceId) continue;
+        float kx = 0, ky = 0, krot = 0;
+        auto kit = knockedAt.find(dr.sm->id);
+        if (kit != knockedAt.end()) {
+          const KnockPose kp = KnockAt(now - kit->second.t0, kit->second.dir);
+          if (kp.done) {
+            knockedAt.erase(kit);
+          } else {
+            kx = kp.dx;
+            ky = kp.dy;
+            krot = kp.rot;
+          }
+        }
         SnowmanBox b = SnowmanBounds(dr.base, dr.height);
         RectI box(static_cast<int>(b.left) - 20, static_cast<int>(b.top) - 20, static_cast<int>(b.right) + 20,
                   static_cast<int>(b.bottom) + 20);
         if (!box.intersects(ov.rect)) continue;
+        const Vec2 base(dr.base.x + kx, dr.base.y + ky);
         if (sprites.snowman)
-          DrawSprite(sprites.snowman.Get(), dr.base.x, dr.base.y, dr.height * easeOutCubic(dr.build), false, dr.wobble,
-                     1.f);
+          DrawSprite(sprites.snowman.Get(), base.x, base.y, dr.height * easeOutCubic(dr.build), false,
+                     dr.wobble + krot, 1.f);
         else
-          decorR.DrawSnowman(f, *dr.sm, D2D1::Point2F(dr.base.x, dr.base.y), dr.height, dr.build, dr.wobble,
+          decorR.DrawSnowman(f, *dr.sm, D2D1::Point2F(base.x, base.y), dr.height, dr.build, dr.wobble + krot,
                              c.decorateMode && c.hoverId == dr.sm->id);
         content = true;
       }
