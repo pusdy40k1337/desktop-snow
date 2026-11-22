@@ -75,7 +75,11 @@ class App {
   void ExitDecorate();
   void DecorClick(POINT pt);
   int HitItem(POINT pt, std::vector<DecorLayoutItem>& layout, bool& isTree);
-  bool AnchorAt(POINT pt, WindowAnchor& anchor, float& relX);
+  bool AnchorAt(POINT pt, WindowAnchor& anchor, float& relX, bool* overWindow = nullptr);
+  void OpenColorPicker(int target, uint32_t snowmanId, uint32_t freeId, POINT at, int selected);
+  void ApplyPickerColor(int index);
+  void UpdateHoverPreview(uint32_t hover);
+  void RestoreHoverPreview();
   const char* T(Str s) const;
 
   LaunchOptions opts_;
@@ -115,10 +119,26 @@ class App {
   std::vector<HWND> catchers_;
   uint32_t hoverId_ = 0;
   bool dragging_ = false, pressed_ = false;
+  enum class DragKind { None = 0, Tree, Snowman, Free };
+  DragKind dragKind_ = DragKind::None;
   uint32_t dragId_ = 0;
-  bool dragTree_ = false;
+  float dragOffX_ = 0, dragOffY_ = 0;
   POINT pressPt_{};
   int colorCycle_ = 0;
+  // Colour picker popup (hats/scarves).
+  struct ColorPopup {
+    bool open = false;
+    POINT at{};
+    int target = 0;  // 1 = snowman hat, 2 = snowman scarf, 3 = free decoration
+    uint32_t snowmanId = 0;
+    uint32_t freeId = 0;
+    int selected = 0;
+  } colorPopup_;
+  // Hover preview: hat/scarf that would be put on the hovered snowman.
+  bool previewActive_ = false;
+  uint32_t previewSnowman_ = 0;
+  int previewSaved_ = 0;
+  int previewTool_ = 0;  // 1 = hat, 2 = scarf
 };
 
 }  // namespace snow::win

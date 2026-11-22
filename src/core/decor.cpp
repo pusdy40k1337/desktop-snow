@@ -105,4 +105,76 @@ bool PaletteHit(const PaletteLayout& layout, int x, int y, Tool& out) {
   return false;
 }
 
+uint32_t DecorColorRgb(int index) {
+  static const uint32_t kPalette[kDecorColorCount] = {
+      0xE5484D,  // red
+      0xF2A93B,  // orange
+      0xF7D046,  // yellow
+      0x46B17B,  // green
+      0x2FB7C9,  // teal
+      0x3B82F6,  // blue
+      0x8B5CF6,  // violet
+      0xE85C9E,  // pink
+      0xF4F7FB,  // white
+      0x2A2D36,  // charcoal
+  };
+  int i = index % kDecorColorCount;
+  if (i < 0) i += kDecorColorCount;
+  return kPalette[i];
+}
+
+float FreeDecorBaseSize(FreeKind kind) {
+  switch (kind) {
+    case FreeKind::Bauble: return 30.f;
+    case FreeKind::CandyCane: return 46.f;
+    case FreeKind::Star: return 38.f;
+    case FreeKind::Hat: return 42.f;
+    case FreeKind::Scarf: return 48.f;
+  }
+  return 34.f;
+}
+
+float FreeDecorAspect(FreeKind kind) {
+  switch (kind) {
+    case FreeKind::Bauble: return 1.f;
+    case FreeKind::CandyCane: return 0.62f;
+    case FreeKind::Star: return 1.f;
+    case FreeKind::Hat: return 1.15f;
+    case FreeKind::Scarf: return 0.72f;
+  }
+  return 1.f;
+}
+
+ColorPickerLayout LayoutColorPicker(int anchorX, int anchorY, const RectI& work, float dpiScale) {
+  ColorPickerLayout l;
+  const float sw = 26.f * dpiScale, gap = 6.f * dpiScale, pad = 8.f * dpiScale;
+  const float total = kDecorColorCount * sw + (kDecorColorCount - 1) * gap + 2 * pad;
+  const float h = sw + 2 * pad;
+  float left = static_cast<float>(anchorX) - total * 0.5f;
+  float top = static_cast<float>(anchorY) + 14.f * dpiScale;
+  left = clampf(left, static_cast<float>(work.left) + 4.f * dpiScale,
+                std::max(static_cast<float>(work.left) + 4.f * dpiScale, static_cast<float>(work.right) - total - 4.f * dpiScale));
+  if (top + h > static_cast<float>(work.bottom) - 4.f * dpiScale)
+    top = static_cast<float>(anchorY) - h - 14.f * dpiScale;
+  top = clampf(top, static_cast<float>(work.top) + 4.f * dpiScale, std::max(static_cast<float>(work.top) + 4.f * dpiScale, static_cast<float>(work.bottom) - h - 4.f * dpiScale));
+  l.bar = RectI(static_cast<int>(left), static_cast<int>(top), static_cast<int>(left + total), static_cast<int>(top + h));
+  for (int i = 0; i < kDecorColorCount; ++i) {
+    const float x = left + pad + static_cast<float>(i) * (sw + gap);
+    const float y = top + pad;
+    l.swatches.push_back(RectI(static_cast<int>(x), static_cast<int>(y), static_cast<int>(x + sw), static_cast<int>(y + sw)));
+  }
+  return l;
+}
+
+int ColorPickerHit(const ColorPickerLayout& layout, int x, int y) {
+  for (size_t i = 0; i < layout.swatches.size(); ++i) {
+    const RectI& r = layout.swatches[i];
+    const int cx = (r.left + r.right) / 2, cy = (r.top + r.bottom) / 2;
+    const int rad = (r.right - r.left) / 2 + 2;
+    const int dx = x - cx, dy = y - cy;
+    if (dx * dx + dy * dy <= rad * rad) return static_cast<int>(i);
+  }
+  return -1;
+}
+
 }  // namespace snow

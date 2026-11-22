@@ -1061,6 +1061,7 @@ void Engine::Impl::UpdateDecor(double now) {
     DecorLayoutItem it;
     it.id = t.id;
     it.tree = true;
+    it.cls = 0;
     it.left = b.left;
     it.top = b.top;
     it.right = b.right;
@@ -1068,6 +1069,28 @@ void Engine::Impl::UpdateDecor(double now) {
     it.baseX = base.x;
     it.baseY = base.y;
     it.height = h;
+    layoutLocal.push_back(it);
+  }
+
+  // Free-standing decorations: placed anywhere on the desktop.
+  for (const auto& fd : d.free) {
+    const MonitorInfo* m = monitorFor(fd.monitor);
+    if (!m) continue;
+    const float size = FreeDecorBaseSize(fd.kind) * fd.scale * m->scale;
+    const float halfW = 0.5f * size * FreeDecorAspect(fd.kind);
+    const float halfH = 0.5f * size;
+    const float cx = static_cast<float>(m->work.left) + fd.nx * m->work.width();
+    const float cy = static_cast<float>(m->work.top) + fd.ny * m->work.height();
+    DecorLayoutItem it;
+    it.id = fd.id;
+    it.cls = 2;
+    it.left = cx - halfW;
+    it.top = cy - halfH;
+    it.right = cx + halfW;
+    it.bottom = cy + halfH;
+    it.baseX = cx;
+    it.baseY = cy;
+    it.height = size;
     layoutLocal.push_back(it);
   }
 
@@ -1079,6 +1102,33 @@ void Engine::Impl::UpdateDecor(double now) {
       taskbar = &w;
   for (const auto& sm : d.snowmen) {
     SnowmanRt& rt = smRt[sm.id];
+    if (sm.free) {
+      const MonitorInfo* m = monitorFor(sm.monitor);
+      if (!m) continue;
+      float h = SnowmanHeightPx(sm.scale, m->scale);
+      SnowmanDraw dr;
+      dr.sm = &sm;
+      dr.base = Vec2(static_cast<float>(m->work.left) + sm.nx * m->work.width(),
+                     static_cast<float>(m->work.top) + sm.ny * m->work.height());
+      dr.height = h;
+      dr.build = 1.f;
+      dr.surfaceId = 0;
+      snowmenDraw.push_back(dr);
+      SnowmanBox b = SnowmanBounds(dr.base, h);
+      DecorLayoutItem it;
+      it.id = sm.id;
+      it.cls = 1;
+      it.left = b.left;
+      it.top = b.top;
+      it.right = b.right;
+      it.bottom = b.bottom;
+      it.baseX = dr.base.x;
+      it.baseY = dr.base.y;
+      it.height = h;
+      it.hwnd = 0;
+      layoutLocal.push_back(it);
+      continue;
+    }
     const WindowInput* target = nullptr;
     const TrackedWindow* targetSrc = nullptr;
     rt.hidden = false;
@@ -1540,6 +1590,10 @@ bool Engine::Impl::DrawDecorateUi(const Overlay& ov) {
   f.dpiScale = ov.scale;
   IDWriteTextFormat* lf = Format(fmtLabel, L"Segoe UI", 11.f, ov.scale, true);
   decorR.DrawPalette(f, pal, c.activeTool, labels, lf);
+  if (c.pickerOpen && ov.work.contains(c.pickerX, c.pickerY)) {
+    ColorPickerLayout cp = LayoutColorPicker(c.pickerX, c.pickerY, ov.work, ov.scale);
+    decorR.DrawColorPicker(f, cp, c.pickerSelected);
+  }
   IDWriteTextFormat* hf = Format(fmtHint, L"Segoe UI", 13.f, ov.scale, false);
   if (hf) {
     float w = std::min(720.f * ov.scale, static_cast<float>(ov.work.width()) - 40.f);
@@ -1607,6 +1661,17 @@ bool Engine::Impl::RenderOverlay(Overlay& ov, const FrameTiming& ft) {
           tf.treeBodyFromSprite = true;
         }
         decorR.DrawTree(tf, td, D2D1::Point2F(it.baseX, it.baseY), it.height, c.decorateMode && c.hoverId == t.id);
+        content = true;
+      }
+    }
+    // Free-standing decorations live on the desktop level, above trees? No:
+    // drawn after the tree loop so they overlap trees when placed on top.
+    for (const auto& fd : d.free) {
+      for (const auto& it : layoutLocal) {
+        if (it.cls != 2 || it.id != fd.id) continue;
+        if (!ov.rect.containsF(it.baseX, it.baseY)) continue;
+        decorR.DrawFreeDecor(f, fd, D2D1::Point2F(it.baseX, it.baseY), it.height,
+                             c.decorateMode && c.hoverId == fd.id);
         content = true;
       }
     }

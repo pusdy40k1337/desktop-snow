@@ -41,6 +41,12 @@ class DecorRenderer {
   void DrawTrain(const DecorFrame& f, const TrainState& t);
   void DrawYeti(const DecorFrame& f, const YetiState& y);
 
+  // Free-standing decoration placed anywhere on the desktop.
+  void DrawFreeDecor(const DecorFrame& f, const FreeDecor& d, D2D1_POINT_2F centre, float size, bool highlight);
+
+  // Colour picker popup for hats/scarves.
+  void DrawColorPicker(const DecorFrame& f, const ColorPickerLayout& layout, int selected);
+
   // Decorate-mode toolbar. labels: Tool::Count UTF-16 strings.
   void DrawPalette(const DecorFrame& f, const PaletteLayout& layout, Tool active,
                    const wchar_t* const* labels, IDWriteTextFormat* labelFormat);

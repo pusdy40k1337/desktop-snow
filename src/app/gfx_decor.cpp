@@ -564,8 +564,7 @@ void DecorRenderer::DrawSnowman(const DecorFrame& f, const SnowmanDecor& sm, D2D
   }
 
   {  // scarf: band around the neck and a hanging tail
-    const int ns = static_cast<int>(th.scarves.size());
-    const D2D1_COLOR_F sc = ToD2D(th.scarves[static_cast<size_t>(ModIdx(sm.scarf, ns))]);
+    const D2D1_COLOR_F sc = Hex(DecorColorRgb(ModIdx(sm.scarf, kDecorColorCount)));
     TransformScope as(dc_);
     as.set(ScaleAbout(accC, 0.f, -0.65f));
     const D2D1_COLOR_F edge = Fade(Darken(sc, 0.55f), 0.9f);
@@ -614,14 +613,13 @@ void DecorRenderer::DrawSnowman(const DecorFrame& f, const SnowmanDecor& sm, D2D
     p.ellipse(0.f, -0.862f, 0.108f, 0.017f, Hex(0x2F2F38));
     p.ringE(0.f, -0.862f, 0.108f, 0.017f, Hex(0x0E0E12, 0.8f), 1.f * px);
     p.rounded(-0.063f, -0.995f, 0.063f, -0.866f, 0.012f, black);
-    p.rect(-0.063f, -0.896f, 0.063f, -0.872f, Hex(0xC8312F));
+    p.rect(-0.063f, -0.896f, 0.063f, -0.872f, Hex(DecorColorRgb(ModIdx(sm.hatColor, kDecorColorCount))));
     p.rect(-0.014f, -0.896f, 0.014f, -0.872f, Hex(0xE8B93E));
     p.rect(-0.046f, -0.985f, -0.036f, -0.905f, Hex(0xFFFFFF, 0.14f));
     p.ellipse(0.f, -0.995f, 0.063f, 0.011f, Hex(0x383842));
     p.roundedStroke(-0.063f, -0.995f, 0.063f, -0.866f, 0.012f, Hex(0x0E0E12, 0.8f), 1.f * px);
   } else if (sm.hat == 2) {
-    const int ns = static_cast<int>(th.scarves.size());
-    const D2D1_COLOR_F sc = ToD2D(th.scarves[static_cast<size_t>(ModIdx(sm.scarf, ns))]);
+    const D2D1_COLOR_F sc = Hex(DecorColorRgb(ModIdx(sm.hatColor, kDecorColorCount)));
     const D2D1_COLOR_F edge = Fade(Darken(sc, 0.55f), 0.9f);
     {  // knitted dome (unit half-ellipse) with ribs
       TransformScope ds(dc_);
@@ -644,6 +642,7 @@ void DecorRenderer::DrawSnowman(const DecorFrame& f, const SnowmanDecor& sm, D2D
     p.ring(0.f, -0.953f, 0.03f, edge, 1.f * px);
   } else if (sm.hat == 3) {
     p.fill(bucket_.Get(), Hex(0x8E9AAA));
+    p.rect(-0.062f, -0.925f, 0.062f, -0.905f, Hex(DecorColorRgb(ModIdx(sm.hatColor, kDecorColorCount))));
     p.rect(-0.062f, -0.92f, -0.05f, -0.85f, Hex(0xFFFFFF, 0.16f));
     p.line(-0.08f, -0.94f, 0.08f, -0.94f, Hex(0x4C5666, 0.7f), 0.006f);
     p.line(-0.074f, -0.905f, 0.074f, -0.905f, Hex(0x4C5666, 0.7f), 0.006f);
@@ -1251,6 +1250,129 @@ void DecorRenderer::drawIcon(Tool tool, float cx, float cy, float size, const De
     }
     default:
       break;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Free-standing decorations (placed anywhere on the desktop)
+
+void DecorRenderer::DrawFreeDecor(const DecorFrame& f, const FreeDecor& d, D2D1_POINT_2F centre, float size,
+                                  bool highlight) {
+  if (!dc_ || size < 6.f) return;
+  ensureGeometry();
+  const float px = 1.f / size;
+  const D2D1_COLOR_F c = Hex(DecorColorRgb(d.color));
+  TransformScope ts(dc_);
+  ts.set(Xf(size, size, 0.f, centre.x, centre.y));
+  const Painter p(dc_, brush_, roundCap_.Get());
+
+  if (highlight) p.ring(0.f, 0.f, 0.60f, Hex(0x8CD9FF, 0.75f), 3.f * px);
+
+  switch (d.kind) {
+    case FreeKind::Bauble: {
+      const float r = 0.40f;
+      p.rounded(-0.09f, -0.62f, 0.09f, -0.47f, 0.03f, Hex(0xE6B93C));
+      p.ring(0.f, -0.62f, 0.075f, Hex(0xE6B93C), 0.9f * px);
+      shadedEllipse(GradKind::Shade, c, 0.f, 0.f, r, r, -0.14f, -0.16f);
+      p.ring(0.f, 0.f, r, Darken(c, 0.5f), 1.1f * px);
+      p.circle(-0.15f, -0.17f, 0.10f, Hex(0xFFFFFF, 0.7f));
+      break;
+    }
+    case FreeKind::CandyCane: {
+      const float ch = 0.9f;
+      TransformScope cs(dc_);
+      cs.set(MakeM(ch, 0.f, 0.f, ch, -0.32f * ch, -0.5f));
+      const float w = 0.25f;
+      const float ol = px / ch;
+      D2D1_COLOR_F stripe = c;
+      if (std::max({c.r, c.g, c.b}) - std::min({c.r, c.g, c.b}) < 0.15f) stripe = Hex(0xD8283A);
+      p.stroke(candy_.Get(), Hex(0x5A1A22, 0.75f), w + 2.f * ol);
+      p.stroke(candy_.Get(), Hex(0xFFFFFF), w);
+      if (candyDash_ && candy_) {
+        if (auto* sb = brush_(stripe)) dc_->DrawGeometry(candy_.Get(), sb, w, candyDash_.Get());
+      }
+      break;
+    }
+    case FreeKind::Star: {
+      TransformScope ss(dc_);
+      ss.set(MakeM(0.45f, 0.f, 0.f, 0.45f, 0.f, 0.f));
+      shadedGeometry(star_.Get(), GradKind::Shade, c, 0.f, 0.f, 1.15f, 1.15f, -0.2f, -0.25f);
+      p.stroke(star_.Get(), Fade(Darken(c, 0.55f), 0.9f), 1.4f * px / 0.45f);
+      break;
+    }
+    case FreeKind::Hat: {
+      if (d.variant == 2) {
+        const D2D1_COLOR_F edge = Fade(Darken(c, 0.55f), 0.9f);
+        TransformScope ds(dc_);
+        ds.set(MakeM(0.46f, 0.f, 0.f, 0.40f, 0.f, 0.06f));
+        p.fill(beanie_.Get(), c);
+        p.stroke(beanie_.Get(), edge, 1.f * px / 0.40f);
+        p.rounded(-0.48f, -0.02f, 0.48f, 0.16f, 0.06f, Lighten(c, 0.35f));
+        p.roundedStroke(-0.48f, -0.02f, 0.48f, 0.16f, 0.06f, edge, 1.f * px);
+        p.circle(0.f, -0.38f, 0.11f, Lighten(c, 0.55f));
+        p.ring(0.f, -0.38f, 0.11f, edge, 1.f * px);
+      } else if (d.variant == 3) {
+        p.rounded(-0.32f, -0.26f, 0.32f, 0.30f, 0.08f, MixC(Hex(0x8E9AAA), c, 0.35f));
+        p.roundedStroke(-0.32f, -0.26f, 0.32f, 0.30f, 0.08f, Hex(0x3E4756, 0.9f), 1.1f * px);
+        p.ellipse(0.f, -0.23f, 0.30f, 0.09f, Hex(0xDDE5EE));
+        p.ringE(0.f, -0.23f, 0.30f, 0.09f, Hex(0x3E4756, 0.9f), 1.f * px);
+        p.rounded(-0.31f, -0.02f, 0.31f, 0.10f, 0.05f, c);
+      } else {
+        p.ellipse(0.f, 0.30f, 0.54f, 0.10f, Hex(0x2F2F38));
+        p.ringE(0.f, 0.30f, 0.54f, 0.10f, Hex(0x0E0E12, 0.8f), 1.f * px);
+        p.rounded(-0.31f, -0.40f, 0.31f, 0.30f, 0.05f, Hex(0x25252D));
+        p.roundedStroke(-0.31f, -0.40f, 0.31f, 0.30f, 0.05f, Hex(0x0E0E12, 0.8f), 1.f * px);
+        p.rect(-0.31f, 0.08f, 0.31f, 0.20f, c);
+        p.rect(-0.05f, 0.08f, 0.05f, 0.20f, Hex(0xE8B93E));
+        p.ellipse(0.f, -0.40f, 0.31f, 0.055f, Hex(0x383842));
+      }
+      break;
+    }
+    case FreeKind::Scarf: {
+      const D2D1_COLOR_F edge = Fade(Darken(c, 0.55f), 0.9f);
+      p.rounded(-0.30f, -0.46f, 0.30f, 0.10f, 0.12f, c);
+      p.roundedStroke(-0.30f, -0.46f, 0.30f, 0.10f, 0.12f, edge, 1.f * px);
+      for (int i = -2; i <= 2; ++i) {
+        const float x = 0.10f * static_cast<float>(i);
+        p.line(x, -0.44f, x, 0.08f, Lighten(c, 0.45f), 0.045f);
+      }
+      for (int i = 0; i < 5; ++i) {
+        const float x = -0.27f + 0.135f * static_cast<float>(i);
+        p.line(x, 0.10f, x - 0.02f, 0.20f, Darken(c, 0.85f), 0.05f);
+      }
+      p.rounded(-0.30f, -0.46f, 0.30f, -0.36f, 0.05f, Lighten(c, 0.25f));
+      p.roundedStroke(-0.30f, -0.46f, 0.30f, -0.36f, 0.05f, edge, 0.8f * px);
+      break;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Colour picker popup for hats/scarves
+
+void DecorRenderer::DrawColorPicker(const DecorFrame& f, const ColorPickerLayout& layout, int selected) {
+  if (!dc_ || layout.bar.empty() || layout.swatches.empty()) return;
+  const float dpi = f.dpiScale > 0.f ? f.dpiScale : 1.f;
+  const Painter p(dc_, brush_, roundCap_.Get());
+  const RectI& bar = layout.bar;
+  const float bl = static_cast<float>(bar.left), bt = static_cast<float>(bar.top);
+  const float br = static_cast<float>(bar.right), bb = static_cast<float>(bar.bottom);
+  const float barR = std::min(12.f * dpi, 0.5f * static_cast<float>(bar.height()));
+  p.rounded(bl, bt + 4.f * dpi, br, bb + 4.f * dpi, barR, Hex(0x000000, 0.25f));
+  p.rounded(bl, bt, br, bb, barR, Hex(0x101626, 0.92f));
+  p.roundedStroke(bl + 0.5f, bt + 0.5f, br - 0.5f, bb - 0.5f, barR, Hex(0xFFFFFF, 0.18f), 1.f * dpi);
+  for (size_t i = 0; i < layout.swatches.size(); ++i) {
+    const RectI& s = layout.swatches[i];
+    const float cx = 0.5f * static_cast<float>(s.left + s.right);
+    const float cy = 0.5f * static_cast<float>(s.top + s.bottom);
+    const float r = 0.5f * static_cast<float>(s.right - s.left) - 2.f * dpi;
+    const D2D1_COLOR_F c = Hex(DecorColorRgb(static_cast<int>(i)));
+    p.circle(cx, cy, r, c);
+    p.ring(cx, cy, r, Hex(0xFFFFFF, 0.35f), 1.f * dpi);
+    if (static_cast<int>(i) == selected) {
+      p.ring(cx, cy, r + 3.f * dpi, Hex(0x8CD9FF, 0.95f), 2.f * dpi);
+      p.circle(cx, cy, 2.5f * dpi, Hex(0x0B1220, 0.85f));
+    }
   }
 }
 

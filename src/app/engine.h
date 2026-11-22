@@ -41,6 +41,10 @@ struct EngineConfig {
   bool decorateMode = false;
   Tool activeTool = Tool::Tree;
   uint32_t hoverId = 0;
+  // Colour picker popup for hats/scarves (drawing only; hit-testing is in App).
+  bool pickerOpen = false;
+  int pickerX = 0, pickerY = 0;
+  int pickerSelected = 0;
   Lang lang = Lang::En;
   std::string diagText;   // pause decisions for the debug layer, one line per monitor
   HWND keepAbove = nullptr;  // our settings window: overlays stay below it while it is topmost
@@ -51,6 +55,7 @@ enum class EngineCommand { ClearSnow, Santa, Train, Yeti, MonitorsChanged, Reass
 struct DecorLayoutItem {
   uint32_t id = 0;
   bool tree = false;
+  int cls = 0;         // 0 = tree, 1 = snowman, 2 = free decoration
   float left = 0, top = 0, right = 0, bottom = 0;  // hit box, absolute px
   float baseX = 0, baseY = 0, height = 0;
   uint64_t hwnd = 0;   // snowman: window it stands on (0 = taskbar / ground)

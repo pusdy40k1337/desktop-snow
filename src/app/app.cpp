@@ -125,6 +125,10 @@ void App::PushConfig() {
   cfg.decorateMode = decorate_;
   cfg.activeTool = tool_;
   cfg.hoverId = hoverId_;
+  cfg.pickerOpen = colorPopup_.open;
+  cfg.pickerX = colorPopup_.at.x;
+  cfg.pickerY = colorPopup_.at.y;
+  cfg.pickerSelected = colorPopup_.selected;
   cfg.lang = lang_;
   cfg.keepAbove = settingsWnd_.Hwnd();
   for (const auto& d : diag_) {
@@ -692,6 +696,8 @@ void App::EnterDecorate() {
   if (decorate_ || opts_.harness) return;
   decorate_ = true;
   tool_ = Tool::Tree;
+  colorPopup_ = ColorPopup();
+  RestoreHoverPreview();
   std::vector<HWND> overlays = engine_.OverlayWindows();
   std::vector<MonitorHandle> mons = EnumerateMonitors();
   std::wstring cls = L"DesktopSnowDecorate." + opts_.instance;
@@ -713,8 +719,11 @@ void App::EnterDecorate() {
 
 void App::ExitDecorate() {
   if (!decorate_) return;
+  RestoreHoverPreview();
+  colorPopup_ = ColorPopup();
   decorate_ = false;
   dragging_ = pressed_ = false;
+  dragKind_ = DragKind::None;
   if (GetCapture()) ReleaseCapture();
   for (HWND h : catchers_) DestroyWindow(h);
   catchers_.clear();
@@ -726,27 +735,30 @@ void App::ExitDecorate() {
 int App::HitItem(POINT pt, std::vector<DecorLayoutItem>& layout, bool& isTree) {
   engine_.GetDecorLayout(layout);
   float x = static_cast<float>(pt.x), y = static_cast<float>(pt.y);
-  // Snowmen stand on windows in front of the desktop trees: test them first.
+  // Snowmen and free decorations sit in front of the desktop trees: test them first.
   for (int pass = 0; pass < 2; ++pass) {
     for (size_t i = 0; i < layout.size(); ++i) {
       const auto& it = layout[i];
-      if (!it.visible || it.tree != (pass == 1)) continue;
+      if (!it.visible) continue;
+      const bool isTreeItem = it.cls == 0;
+      if (isTreeItem != (pass == 1)) continue;
       if (x < it.left || x >= it.right || y < it.top || y >= it.bottom) continue;
-      if (it.tree) {
+      if (isTreeItem) {
         float u, v;
         TreeScreenToLocal(Vec2(it.baseX, it.baseY), it.height, Vec2(x, y), u, v);
         bool trunk = v >= 0.86f && std::fabs(u - 0.5f) < 0.1f;
         bool star = v < 0.12f && std::fabs(u - 0.5f) < 0.12f;
         if (!TreeFoliageContains(u, v) && !trunk && !star) continue;
       }
-      isTree = it.tree;
+      isTree = isTreeItem;
       return static_cast<int>(i);
     }
   }
   return -1;
 }
 
-bool App::AnchorAt(POINT pt, WindowAnchor& anchor, float& relX) {
+bool App::AnchorAt(POINT pt, WindowAnchor& anchor, float& relX, bool* overWindow) {
+  if (overWindow) *overWindow = false;
   anchor = WindowAnchor();
   auto snap = tracker_.Snapshot();
   if (snap) {
@@ -764,6 +776,7 @@ bool App::AnchorAt(POINT pt, WindowAnchor& anchor, float& relX) {
       anchor.className = w.className;
       anchor.title = w.title;
       relX = clampf(static_cast<float>(pt.x - r.left) / std::max(1L, r.right - r.left), 0.f, 1.f);
+      if (overWindow) *overWindow = true;
       return true;
     }
   }
@@ -778,12 +791,90 @@ bool App::AnchorAt(POINT pt, WindowAnchor& anchor, float& relX) {
   return true;
 }
 
+void App::OpenColorPicker(int target, uint32_t snowmanId, uint32_t freeId, POINT at, int selected) {
+  colorPopup_.open = true;
+  colorPopup_.target = target;
+  colorPopup_.snowmanId = snowmanId;
+  colorPopup_.freeId = freeId;
+  colorPopup_.at = at;
+  colorPopup_.selected = selected;
+  PushConfig();
+}
+
+void App::ApplyPickerColor(int index) {
+  DecorState& d = state_.decor;
+  const int c = ((index % kDecorColorCount) + kDecorColorCount) % kDecorColorCount;
+  if (colorPopup_.target == 1) {
+    for (auto& s : d.snowmen)
+      if (s.id == colorPopup_.snowmanId) {
+        s.hatColor = c;
+        previewSaved_ = s.hat;
+        previewActive_ = false;
+      }
+  } else if (colorPopup_.target == 2) {
+    for (auto& s : d.snowmen)
+      if (s.id == colorPopup_.snowmanId) {
+        s.scarf = c;
+        previewSaved_ = s.scarf;
+        previewActive_ = false;
+      }
+  } else if (colorPopup_.target == 3) {
+    for (auto& f : d.free)
+      if (f.id == colorPopup_.freeId) f.color = c;
+  }
+  colorPopup_.selected = c;
+  PushDecor();
+  ScheduleSave();
+}
+
+void App::RestoreHoverPreview() {
+  if (!previewActive_) return;
+  for (auto& s : state_.decor.snowmen) {
+    if (s.id != previewSnowman_) continue;
+    if (previewTool_ == 1) s.hat = previewSaved_;
+    else if (previewTool_ == 2) s.scarf = previewSaved_;
+  }
+  previewActive_ = false;
+  previewSnowman_ = 0;
+}
+
+void App::UpdateHoverPreview(uint32_t hover) {
+  RestoreHoverPreview();
+  if (!decorate_ || dragging_ || hover == 0) return;
+  if (tool_ != Tool::Hat && tool_ != Tool::Scarf) return;
+  for (auto& s : state_.decor.snowmen) {
+    if (s.id != hover) continue;
+    if (tool_ == Tool::Hat) {
+      previewTool_ = 1;
+      previewSaved_ = s.hat;
+      s.hat = s.hat == 0 ? 1 : (s.hat % 3) + 1;
+    } else {
+      previewTool_ = 2;
+      previewSaved_ = s.scarf;
+      s.scarf = (s.scarf + 1) % kDecorColorCount;
+    }
+    previewActive_ = true;
+    previewSnowman_ = s.id;
+    PushDecor();
+    break;
+  }
+}
+
 void App::DecorClick(POINT pt) {
   DecorState& d = state_.decor;
+  HMONITOR mon = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
+  MONITORINFOEXW mi{};
+  mi.cbSize = sizeof(mi);
+  GetMonitorInfoW(mon, &mi);
+  const RectI work(mi.rcWork.left, mi.rcWork.top, mi.rcWork.right, mi.rcWork.bottom);
+  const float dpi = MonitorScale(mon);
+  const std::string monId = Narrow(mi.szDevice);
+
   std::vector<DecorLayoutItem> layout;
   bool isTree = false;
   int hit = HitItem(pt, layout, isTree);
-  const Theme& th = GetTheme(state_.settings.theme);
+  const int cls = hit >= 0 ? layout[static_cast<size_t>(hit)].cls : -1;
+  const uint32_t hitId = hit >= 0 ? layout[static_cast<size_t>(hit)].id : 0;
   auto findTree = [&](uint32_t id) -> TreeDecor* {
     for (auto& t : d.trees)
       if (t.id == id) return &t;
@@ -794,33 +885,51 @@ void App::DecorClick(POINT pt) {
       if (s.id == id) return &s;
     return nullptr;
   };
-  TreeDecor* tree = hit >= 0 && isTree ? findTree(layout[static_cast<size_t>(hit)].id) : nullptr;
-  SnowmanDecor* man = hit >= 0 && !isTree ? findSnowman(layout[static_cast<size_t>(hit)].id) : nullptr;
+  auto findFree = [&](uint32_t id) -> FreeDecor* {
+    for (auto& f : d.free)
+      if (f.id == id) return &f;
+    return nullptr;
+  };
+  TreeDecor* tree = cls == 0 ? findTree(hitId) : nullptr;
+  SnowmanDecor* man = cls == 1 ? findSnowman(hitId) : nullptr;
+  FreeDecor* freeItem = cls == 2 ? findFree(hitId) : nullptr;
   float u = 0, v = 0;
   if (tree) {
     const auto& it = layout[static_cast<size_t>(hit)];
     TreeScreenToLocal(Vec2(it.baseX, it.baseY), it.height, Vec2(static_cast<float>(pt.x), static_cast<float>(pt.y)), u, v);
   }
+  auto spawnFree = [&](FreeKind kind, int color, int variant) -> FreeDecor* {
+    if (static_cast<int>(d.free.size()) >= kMaxFreeDecor) return nullptr;
+    FreeDecor f;
+    f.id = d.nextId++;
+    f.kind = kind;
+    f.monitor = monId;
+    f.scale = 1.f;
+    f.color = color;
+    f.variant = variant;
+    f.nx = clampf(static_cast<float>(pt.x - work.left) / static_cast<float>(std::max(1, work.width())), 0.02f, 0.98f);
+    f.ny = clampf(static_cast<float>(pt.y - work.top) / static_cast<float>(std::max(1, work.height())), 0.02f, 0.98f);
+    d.free.push_back(f);
+    return &d.free.back();
+  };
   bool changed = false;
   switch (tool_) {
     case Tool::Tree:
-      if (!tree && !man) {
+      if (!tree && !man && !freeItem) {
         if (static_cast<int>(d.trees.size()) >= kMaxTrees) {
           Balloon(T(Str::TipTreeLimit));
           break;
         }
-        HMONITOR mon = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
-        MONITORINFOEXW mi{};
-        mi.cbSize = sizeof(mi);
-        GetMonitorInfoW(mon, &mi);
         TreeDecor t;
         t.id = d.nextId++;
-        t.monitor = Narrow(mi.szDevice);
-        float h = TreeHeightPx(1.f, MonitorScale(mon));
-        // The click marks the middle of the tree; the base sits half a tree lower.
-        float baseY = std::min(static_cast<float>(pt.y) + h * 0.5f, static_cast<float>(mi.rcWork.bottom));
-        t.nx = clampf(static_cast<float>(pt.x - mi.rcWork.left) / std::max(1L, mi.rcWork.right - mi.rcWork.left), 0, 1);
-        t.ny = clampf((baseY - mi.rcWork.top) / std::max(1L, mi.rcWork.bottom - mi.rcWork.top), 0, 1);
+        t.monitor = monId;
+        const float h = TreeHeightPx(1.f, dpi);
+        const float baseX = clampf(static_cast<float>(pt.x), static_cast<float>(work.left) + 20.f * dpi,
+                                   static_cast<float>(work.right) - 20.f * dpi);
+        const float baseY = clampf(static_cast<float>(pt.y) + h * 0.5f, static_cast<float>(work.top) + h * 0.2f,
+                                   static_cast<float>(work.bottom));
+        t.nx = clampf((baseX - static_cast<float>(work.left)) / static_cast<float>(std::max(1, work.width())), 0.f, 1.f);
+        t.ny = clampf((baseY - static_cast<float>(work.top)) / static_cast<float>(std::max(1, work.height())), 0.f, 1.f);
         d.trees.push_back(t);
         changed = true;
       }
@@ -832,9 +941,12 @@ void App::DecorClick(POINT pt) {
         o.kind = tool_ == Tool::Bauble ? OrnamentKind::Bauble : OrnamentKind::CandyCane;
         o.u = u;
         o.v = v;
-        o.color = colorCycle_++ % static_cast<int>(th.ornaments.size());
+        o.color = colorCycle_++ % kDecorColorCount;
         tree->ornaments.push_back(o);
         changed = true;
+      } else if (!man && !tree) {
+        if (spawnFree(tool_ == Tool::Bauble ? FreeKind::Bauble : FreeKind::CandyCane, colorCycle_++ % kDecorColorCount, 1))
+          changed = true;
       }
       break;
     case Tool::Lights:
@@ -847,33 +959,82 @@ void App::DecorClick(POINT pt) {
       if (tree) {
         tree->star = !tree->star;
         changed = true;
+      } else if (!man) {
+        if (spawnFree(FreeKind::Star, 2, 1)) changed = true;
       }
       break;
     case Tool::Snowman:
-      if (!man && static_cast<int>(d.snowmen.size()) < kMaxSnowmen) {
+      if (!man) {
+        if (static_cast<int>(d.snowmen.size()) >= kMaxSnowmen) break;
+        WindowAnchor anc;
+        float relX = 0.5f;
+        bool over = false;
+        AnchorAt(pt, anc, relX, &over);
         SnowmanDecor s;
         s.id = d.nextId++;
-        AnchorAt(pt, s.anchor, s.relX);
-        s.scarf = colorCycle_++ % 4;
+        const float h = SnowmanHeightPx(1.f, dpi);
+        if (over) {
+          s.free = false;
+          s.anchor = anc;
+          s.relX = relX;
+        } else {
+          s.free = true;
+          s.monitor = monId;
+          const float baseX = clampf(static_cast<float>(pt.x), static_cast<float>(work.left) + 0.3f * h,
+                                     static_cast<float>(work.right) - 0.3f * h);
+          const float baseY = clampf(static_cast<float>(pt.y), static_cast<float>(work.top) + h,
+                                     static_cast<float>(work.bottom));
+          s.nx = clampf((baseX - static_cast<float>(work.left)) / static_cast<float>(std::max(1, work.width())), 0.f, 1.f);
+          s.ny = clampf((baseY - static_cast<float>(work.top)) / static_cast<float>(std::max(1, work.height())), 0.f, 1.f);
+        }
+        s.hat = 1;
+        s.hatColor = colorCycle_ % kDecorColorCount;
+        s.scarf = colorCycle_++ % kDecorColorCount;
         d.snowmen.push_back(s);
         changed = true;
       }
       break;
     case Tool::Hat:
       if (man) {
-        man->hat = (man->hat + 1) % 4;
+        if (previewActive_ && previewSnowman_ == man->id && previewTool_ == 1) {
+          previewActive_ = false;  // commit the previewed hat
+          previewSaved_ = man->hat;
+        } else {
+          man->hat = man->hat == 0 ? 1 : (man->hat % 3) + 1;
+        }
         changed = true;
+        OpenColorPicker(1, man->id, 0, pt, man->hatColor);
+      } else if (!tree) {
+        FreeDecor* f = spawnFree(FreeKind::Hat, colorCycle_ % kDecorColorCount, (colorCycle_ % 3) + 1);
+        if (f) {
+          colorCycle_++;
+          changed = true;
+          OpenColorPicker(3, 0, f->id, pt, f->color);
+        }
       }
       break;
     case Tool::Scarf:
       if (man) {
-        man->scarf = (man->scarf + 1) % 4;
-        changed = true;
+        if (previewActive_ && previewSnowman_ == man->id && previewTool_ == 2) {
+          previewActive_ = false;
+          previewSaved_ = man->scarf;
+        }
+        OpenColorPicker(2, man->id, 0, pt, man->scarf);
+      } else if (!tree) {
+        FreeDecor* f = spawnFree(FreeKind::Scarf, colorCycle_++ % kDecorColorCount, 1);
+        if (f) {
+          changed = true;
+          OpenColorPicker(3, 0, f->id, pt, f->color);
+        }
       }
       break;
     case Tool::Erase:
-      if (tree) {
-        // Nearest ornament first, then the star, then the whole tree.
+      if (freeItem) {
+        const uint32_t id = freeItem->id;
+        d.free.erase(std::remove_if(d.free.begin(), d.free.end(), [&](const FreeDecor& f) { return f.id == id; }),
+                     d.free.end());
+        changed = true;
+      } else if (tree) {
         int best = -1;
         float bestD = 0.06f;
         for (size_t i = 0; i < tree->ornaments.size(); ++i) {
@@ -932,19 +1093,36 @@ LRESULT App::HandleCatcher(HWND h, UINT m, WPARAM w, LPARAM l) {
     case WM_LBUTTONUP: {
       POINT pt{GET_X_LPARAM(l), GET_Y_LPARAM(l)};
       ClientToScreen(h, &pt);
+      HMONITOR mon = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
+      MONITORINFO mi{};
+      mi.cbSize = sizeof(mi);
+      GetMonitorInfoW(mon, &mi);
+      const RectI work(mi.rcWork.left, mi.rcWork.top, mi.rcWork.right, mi.rcWork.bottom);
+      const float dpi = MonitorScale(mon);
       if (m == WM_LBUTTONDOWN) {
-        // Palette first.
-        HMONITOR mon = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
-        MONITORINFO mi{};
-        mi.cbSize = sizeof(mi);
-        GetMonitorInfoW(mon, &mi);
-        PaletteLayout pl = LayoutPalette(RectI(mi.rcWork.left, mi.rcWork.top, mi.rcWork.right, mi.rcWork.bottom),
-                                         MonitorScale(mon));
+        // Colour picker first: it floats above everything.
+        if (colorPopup_.open) {
+          ColorPickerLayout cp = LayoutColorPicker(colorPopup_.at.x, colorPopup_.at.y, work, dpi);
+          const int sw = ColorPickerHit(cp, pt.x, pt.y);
+          if (sw >= 0) {
+            ApplyPickerColor(sw);
+            colorPopup_.open = false;
+            PushConfig();
+            return 0;
+          }
+          colorPopup_.open = false;  // click outside closes it; the click continues
+          PushConfig();
+        }
+        // Palette next.
+        PaletteLayout pl = LayoutPalette(work, dpi);
         Tool t;
         if (PaletteHit(pl, pt.x, pt.y, t)) {
           if (t == Tool::Done) ExitDecorate();
           else {
+            RestoreHoverPreview();
             tool_ = t;
+            hoverId_ = 0;
+            PushDecor();
             PushConfig();
           }
           return 0;
@@ -956,32 +1134,73 @@ LRESULT App::HandleCatcher(HWND h, UINT m, WPARAM w, LPARAM l) {
         dragging_ = false;
         pressPt_ = pt;
         dragId_ = hit >= 0 ? layout[static_cast<size_t>(hit)].id : 0;
-        dragTree_ = isTree;
+        if (hit >= 0) {
+          const DecorLayoutItem& it = layout[static_cast<size_t>(hit)];
+          dragKind_ = it.cls == 0 ? DragKind::Tree : (it.cls == 2 ? DragKind::Free : DragKind::Snowman);
+          dragOffX_ = static_cast<float>(pt.x) - it.baseX;
+          dragOffY_ = static_cast<float>(pt.y) - it.baseY;
+        } else {
+          dragKind_ = DragKind::None;
+        }
         SetCapture(h);
         return 0;
       }
       if (m == WM_MOUSEMOVE) {
-        if (pressed_ && dragId_ && !dragging_ && (std::abs(pt.x - pressPt_.x) > 4 || std::abs(pt.y - pressPt_.y) > 4))
+        if (pressed_ && dragId_ && !dragging_ && (std::abs(pt.x - pressPt_.x) > 4 || std::abs(pt.y - pressPt_.y) > 4)) {
           dragging_ = true;
+          RestoreHoverPreview();
+        }
         if (dragging_) {
           DecorState& d = state_.decor;
-          if (dragTree_) {
+          MONITORINFOEXW mi2{};
+          mi2.cbSize = sizeof(mi2);
+          GetMonitorInfoW(mon, &mi2);
+          if (dragKind_ == DragKind::Tree) {
             for (auto& t : d.trees) {
               if (t.id != dragId_) continue;
-              HMONITOR mon = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
-              MONITORINFOEXW mi{};
-              mi.cbSize = sizeof(mi);
-              GetMonitorInfoW(mon, &mi);
-              float hgt = TreeHeightPx(t.scale, MonitorScale(mon));
-              float baseY = std::min(static_cast<float>(pt.y) + hgt * 0.5f, static_cast<float>(mi.rcWork.bottom));
-              t.monitor = Narrow(mi.szDevice);
-              t.nx = clampf(static_cast<float>(pt.x - mi.rcWork.left) / std::max(1L, mi.rcWork.right - mi.rcWork.left),
-                            0, 1);
-              t.ny = clampf((baseY - mi.rcWork.top) / std::max(1L, mi.rcWork.bottom - mi.rcWork.top), 0, 1);
+              float hgt = TreeHeightPx(t.scale, dpi);
+              float bx = clampf(static_cast<float>(pt.x) - dragOffX_, static_cast<float>(work.left) + 20.f * dpi,
+                                static_cast<float>(work.right) - 20.f * dpi);
+              float by = clampf(static_cast<float>(pt.y) - dragOffY_, static_cast<float>(work.top) + hgt * 0.15f,
+                                static_cast<float>(work.bottom));
+              t.monitor = Narrow(mi2.szDevice);
+              t.nx = clampf((bx - static_cast<float>(work.left)) / static_cast<float>(std::max(1, work.width())), 0.f, 1.f);
+              t.ny = clampf((by - static_cast<float>(work.top)) / static_cast<float>(std::max(1, work.height())), 0.f, 1.f);
             }
-          } else {
-            for (auto& s : d.snowmen)
-              if (s.id == dragId_) AnchorAt(pt, s.anchor, s.relX);
+          } else if (dragKind_ == DragKind::Snowman) {
+            WindowAnchor anc;
+            float relX = 0.5f;
+            bool over = false;
+            AnchorAt(pt, anc, relX, &over);
+            for (auto& s : d.snowmen) {
+              if (s.id != dragId_) continue;
+              if (over) {
+                s.free = false;
+                s.anchor = anc;
+                s.relX = relX;
+              } else {
+                float hh = SnowmanHeightPx(s.scale, dpi);
+                float bx = clampf(static_cast<float>(pt.x) - dragOffX_, static_cast<float>(work.left) + 0.3f * hh,
+                                  static_cast<float>(work.right) - 0.3f * hh);
+                float by = clampf(static_cast<float>(pt.y) - dragOffY_, static_cast<float>(work.top) + hh,
+                                  static_cast<float>(work.bottom));
+                s.free = true;
+                s.monitor = Narrow(mi2.szDevice);
+                s.nx = clampf((bx - static_cast<float>(work.left)) / static_cast<float>(std::max(1, work.width())), 0.f, 1.f);
+                s.ny = clampf((by - static_cast<float>(work.top)) / static_cast<float>(std::max(1, work.height())), 0.f, 1.f);
+              }
+            }
+          } else if (dragKind_ == DragKind::Free) {
+            for (auto& fr : d.free) {
+              if (fr.id != dragId_) continue;
+              float bx = clampf(static_cast<float>(pt.x) - dragOffX_, static_cast<float>(work.left) + 10.f * dpi,
+                                static_cast<float>(work.right) - 10.f * dpi);
+              float by = clampf(static_cast<float>(pt.y) - dragOffY_, static_cast<float>(work.top) + 10.f * dpi,
+                                static_cast<float>(work.bottom) - 10.f * dpi);
+              fr.monitor = Narrow(mi2.szDevice);
+              fr.nx = clampf((bx - static_cast<float>(work.left)) / static_cast<float>(std::max(1, work.width())), 0.01f, 0.99f);
+              fr.ny = clampf((by - static_cast<float>(work.top)) / static_cast<float>(std::max(1, work.height())), 0.01f, 0.99f);
+            }
           }
           PushDecor();
           return 0;
@@ -992,6 +1211,7 @@ LRESULT App::HandleCatcher(HWND h, UINT m, WPARAM w, LPARAM l) {
         uint32_t hov = hit >= 0 ? layout[static_cast<size_t>(hit)].id : 0;
         if (hov != hoverId_) {
           hoverId_ = hov;
+          UpdateHoverPreview(hov);
           PushConfig();
         }
         return 0;
@@ -1000,8 +1220,47 @@ LRESULT App::HandleCatcher(HWND h, UINT m, WPARAM w, LPARAM l) {
       ReleaseCapture();
       bool wasDrag = dragging_;
       pressed_ = dragging_ = false;
+      dragKind_ = DragKind::None;
       if (wasDrag) ScheduleSave();
       else DecorClick(pt);
+      return 0;
+    }
+    case WM_MOUSEWHEEL: {
+      POINT pt{GET_X_LPARAM(l), GET_Y_LPARAM(l)};  // screen coordinates for the wheel
+      std::vector<DecorLayoutItem> layout;
+      bool isTree = false;
+      int hit = HitItem(pt, layout, isTree);
+      if (hit >= 0) {
+        const float steps = static_cast<float>(GET_WHEEL_DELTA_WPARAM(w)) / static_cast<float>(WHEEL_DELTA);
+        const float k = std::pow(1.1f, steps);
+        const uint32_t id = layout[static_cast<size_t>(hit)].id;
+        const int cls = layout[static_cast<size_t>(hit)].cls;
+        DecorState& d = state_.decor;
+        bool done = false;
+        if (cls == 0) {
+          for (auto& t : d.trees)
+            if (t.id == id) {
+              t.scale = clampf(t.scale * k, 0.4f, 2.5f);
+              done = true;
+            }
+        } else if (cls == 1) {
+          for (auto& s : d.snowmen)
+            if (s.id == id) {
+              s.scale = clampf(s.scale * k, 0.4f, 2.5f);
+              done = true;
+            }
+        } else {
+          for (auto& f : d.free)
+            if (f.id == id) {
+              f.scale = clampf(f.scale * k, 0.4f, 2.5f);
+              done = true;
+            }
+        }
+        if (done) {
+          PushDecor();
+          ScheduleSave();
+        }
+      }
       return 0;
     }
     case WM_CLOSE:

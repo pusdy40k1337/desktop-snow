@@ -108,7 +108,24 @@ void Sanitize(DecorState& d) {
     s.scale = clampNum(s.scale, 0.4f, 2.5f, 1);
     s.hat = std::clamp(s.hat, 0, 3);
     s.scarf = std::clamp(s.scarf, 0, 63);
+    s.hatColor = std::clamp(s.hatColor, 0, 63);
+    if (s.free) {
+      s.nx = clampNum(s.nx, 0, 1, 0.5f);
+      s.ny = clampNum(s.ny, 0, 1, 1);
+    }
     maxId = std::max(maxId, s.id);
+  }
+  if (d.free.size() > static_cast<size_t>(kMaxFreeDecor))
+    d.free.resize(static_cast<size_t>(kMaxFreeDecor));
+  for (auto& f : d.free) {
+    f.nx = clampNum(f.nx, 0, 1, 0.5f);
+    f.ny = clampNum(f.ny, 0, 1, 0.5f);
+    f.scale = clampNum(f.scale, 0.4f, 2.5f, 1);
+    f.color = std::clamp(f.color, 0, 63);
+    f.variant = std::clamp(f.variant, 1, 3);
+    if (static_cast<int>(f.kind) < 0 || static_cast<int>(f.kind) > static_cast<int>(FreeKind::Scarf))
+      f.kind = FreeKind::Bauble;
+    maxId = std::max(maxId, f.id);
   }
   // Ids must be unique and non-zero.
   uint32_t next = std::max(d.nextId, maxId + 1);
@@ -119,6 +136,7 @@ void Sanitize(DecorState& d) {
   };
   for (auto& t : d.trees) fix(t.id);
   for (auto& s : d.snowmen) fix(s.id);
+  for (auto& f : d.free) fix(f.id);
   d.nextId = std::max<uint32_t>(next, 1);
 }
 
@@ -243,9 +261,36 @@ Value ToJson(const AppState& st) {
     mv.set("scale", m.scale);
     mv.set("hat", m.hat);
     mv.set("scarf", m.scarf);
+    mv.set("hatColor", m.hatColor);
+    mv.set("free", m.free);
+    mv.set("monitor", m.monitor);
+    mv.set("x", m.nx);
+    mv.set("y", m.ny);
     men.push(mv);
   }
   decor.set("snowmen", men);
+  Value free = Value::array();
+  for (const auto& f : st.decor.free) {
+    Value fv = Value::object();
+    fv.set("id", f.id);
+    const char* kind = "bauble";
+    switch (f.kind) {
+      case FreeKind::CandyCane: kind = "candycane"; break;
+      case FreeKind::Star: kind = "star"; break;
+      case FreeKind::Hat: kind = "hat"; break;
+      case FreeKind::Scarf: kind = "scarf"; break;
+      default: break;
+    }
+    fv.set("kind", std::string(kind));
+    fv.set("monitor", f.monitor);
+    fv.set("x", f.nx);
+    fv.set("y", f.ny);
+    fv.set("scale", f.scale);
+    fv.set("color", f.color);
+    fv.set("variant", f.variant);
+    free.push(fv);
+  }
+  decor.set("free", free);
   decor.set("nextId", st.decor.nextId);
   root.set("decorations", decor);
   return root;
@@ -368,7 +413,30 @@ void FromJson(const Value& root, AppState& st) {
       rd(mv, "scale", m.scale);
       rd(mv, "hat", m.hat);
       rd(mv, "scarf", m.scarf);
+      rd(mv, "hatColor", m.hatColor);
+      rd(mv, "free", m.free);
+      rd(mv, "monitor", m.monitor);
+      rd(mv, "x", m.nx);
+      rd(mv, "y", m.ny);
       d.snowmen.push_back(std::move(m));
+    }
+    for (const Value& fv : decor["free"].elements()) {
+      if (!fv.isObject()) continue;
+      FreeDecor f;
+      f.id = static_cast<uint32_t>(std::max(0, fv["id"].asInt(0)));
+      const std::string kind = fv["kind"].asString();
+      if (kind == "candycane") f.kind = FreeKind::CandyCane;
+      else if (kind == "star") f.kind = FreeKind::Star;
+      else if (kind == "hat") f.kind = FreeKind::Hat;
+      else if (kind == "scarf") f.kind = FreeKind::Scarf;
+      else f.kind = FreeKind::Bauble;
+      rd(fv, "monitor", f.monitor);
+      rd(fv, "x", f.nx);
+      rd(fv, "y", f.ny);
+      rd(fv, "scale", f.scale);
+      rd(fv, "color", f.color);
+      rd(fv, "variant", f.variant);
+      d.free.push_back(std::move(f));
     }
     int next = decor["nextId"].asInt(1);
     d.nextId = static_cast<uint32_t>(std::max(1, next));
