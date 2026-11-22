@@ -1693,6 +1693,7 @@ bool Engine::Impl::RenderOverlay(Overlay& ov, const FrameTiming& ft) {
     }
     // Train hit box: snowmen standing on the rails get knocked flying. The
     // check is geometric (core/knock.h) and runs before the drawing loop.
+    if (!actors.train().active && !knockedAt.empty()) knockedAt.clear();  // a new pass starts clean
     if (c.settings.extras.train && c.settings.extras.trainKnocksSnowmen && actors.train().active) {
       const TrainState& tr = actors.train();
       TrainHitBox hb;
@@ -1713,9 +1714,9 @@ bool Engine::Impl::RenderOverlay(Overlay& ov, const FrameTiming& ft) {
         auto kit = knockedAt.find(dr.sm->id);
         if (kit != knockedAt.end()) {
           const KnockPose kp = KnockAt(now - kit->second.t0, kit->second.dir);
-          if (kp.done) {
-            knockedAt.erase(kit);
-          } else {
+          // The marker stays until the train leaves, otherwise the next
+          // overlay/frame would start the tumble again and again.
+          if (!kp.done) {
             kx = kp.dx;
             ky = kp.dy;
             krot = kp.rot;
