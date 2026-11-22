@@ -9,6 +9,15 @@ get visits from Santa, a gift train and a snowman-hunting yeti.
 Native C++20 / Win32 / Direct3D 11 / DirectComposition / Direct2D. One
 self-contained exe, no installer, no runtime dependencies.
 
+## Download
+
+[**Latest release**](../../releases/latest):
+
+- **DesktopSnow.exe** — a single self-contained exe. Download and run.
+- **DesktopSnow-portable.zip** — exe + `START.cmd` / `TEST.cmd` launchers + README.
+
+Works on Windows 10 (2004+) and Windows 11, x64.
+
 ## Install & run
 
 **No toolchain needed:** every CI run on `windows-latest` publishes a
