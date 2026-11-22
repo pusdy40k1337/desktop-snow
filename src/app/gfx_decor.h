@@ -43,6 +43,9 @@ class DecorRenderer {
 
   // Free-standing decoration placed anywhere on the desktop.
   void DrawFreeDecor(const DecorFrame& f, const FreeDecor& d, D2D1_POINT_2F centre, float size, bool highlight);
+  // The snowball being rolled: a shaded ball with snow crust details spinning
+  // with the ball (radius in px, spin in radians).
+  void DrawSnowball(const DecorFrame& f, D2D1_POINT_2F centre, float radius, float spin);
 
   // Colour picker popup for hats/scarves.
   void DrawColorPicker(const DecorFrame& f, const ColorPickerLayout& layout, int selected);

@@ -232,6 +232,7 @@ Value ToJson(const AppState& st) {
   ex.set("santa", s.extras.santa);
   ex.set("train", s.extras.train);
   ex.set("trainKnocks", s.extras.trainKnocksSnowmen);
+  ex.set("snowballs", s.extras.snowballs);
   ex.set("yeti", s.extras.yeti);
   set.set("extras", ex);
   root.set("settings", set);
@@ -384,6 +385,7 @@ void FromJson(const Value& root, AppState& st) {
     rd(ex, "santa", s.extras.santa);
     rd(ex, "train", s.extras.train);
     rd(ex, "trainKnocks", s.extras.trainKnocksSnowmen);
+    rd(ex, "snowballs", s.extras.snowballs);
     rd(ex, "yeti", s.extras.yeti);
   }
 

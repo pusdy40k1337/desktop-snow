@@ -325,6 +325,20 @@ float PileModel::removeRange(float x0, float x1, float fraction, float massPerPa
   return removed;
 }
 
+float PileModel::carveRange(float x0, float x1) {
+  if (h_.empty() || x1 <= x0) return 0.f;
+  int i0 = std::max(0, static_cast<int>(std::floor(x0 / p_.columnStep)));
+  int i1 = std::min(columns(), static_cast<int>(std::ceil(x1 / p_.columnStep)));
+  if (i1 <= i0) return 0.f;
+  float removed = 0.f;
+  for (int i = i0; i < i1; ++i) {
+    removed += h_[static_cast<size_t>(i)];
+    h_[static_cast<size_t>(i)] = 0.f;
+  }
+  if (removed > 0.f) ++version_;
+  return removed;
+}
+
 void PileModel::melt(float pxPerSecond, float dt) {
   if (pxPerSecond <= 0.f || dt <= 0.f) return;
   float d = pxPerSecond * dt;

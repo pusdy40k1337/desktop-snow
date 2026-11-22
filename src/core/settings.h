@@ -52,6 +52,7 @@ struct ExtrasSettings {
   bool santa = true;
   bool train = true;
   bool trainKnocksSnowmen = true;
+  bool snowballs = true;
   bool yeti = true;
 };
 

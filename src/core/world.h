@@ -128,6 +128,9 @@ class World {
   void clearSnow();
   void kick(uint64_t surfaceId, float impulse);
   void puff(Vec2 p, int count, float scale);
+  // A rolling snowball scooped the snow in [x0, x1) local px of this edge.
+  // Returns the collected mass (height-px); the pile keeps its own relaxation.
+  float carvePile(uint64_t surfaceId, float x0, float x1);
 
   const std::unordered_map<uint64_t, Surface>& surfaces() const { return surfaces_; }
   const Surface* surface(uint64_t id) const;

@@ -1350,6 +1350,23 @@ void DecorRenderer::DrawFreeDecor(const DecorFrame& f, const FreeDecor& d, D2D1_
 // ---------------------------------------------------------------------------
 // Colour picker popup for hats/scarves
 
+void DecorRenderer::DrawSnowball(const DecorFrame& f, D2D1_POINT_2F c, float r, float spin) {
+  if (!dc_ || r < 0.5f) return;
+  ensureGeometry();
+  const Painter p(dc_, brush_, roundCap_.Get());
+  // Soft shadow on the snow it rolls over.
+  p.ellipse(c.x, c.y + r * 0.55f, r * 0.9f, r * 0.26f, Hex(0x1A2233, 0.22f));
+  shadedEllipse(GradKind::Shade, Hex(0xF4F7FB), c.x, c.y, r, r, -0.28f * r, -0.32f * r);
+  p.ring(c.x, c.y, r, Hex(0xCBD8E8, 0.95f), std::max(1.f, r * 0.05f));
+  // Crust clumps: fixed on the ball, so they turn with it while it rolls.
+  for (int i = 0; i < 6; ++i) {
+    const float a = spin + static_cast<float>(i) * 1.0471976f;
+    const float rr = r * (0.42f + 0.12f * static_cast<float>(i % 2));
+    p.circle(c.x + std::cos(a) * rr, c.y + std::sin(a) * rr * 0.9f, std::max(0.6f, r * 0.055f), Hex(0xFFFFFF, 0.6f));
+  }
+  p.circle(c.x - r * 0.3f, c.y - r * 0.34f, r * 0.16f, Hex(0xFFFFFF, 0.85f));
+}
+
 void DecorRenderer::DrawColorPicker(const DecorFrame& f, const ColorPickerLayout& layout, int selected) {
   if (!dc_ || layout.bar.empty() || layout.swatches.empty()) return;
   const float dpi = f.dpiScale > 0.f ? f.dpiScale : 1.f;

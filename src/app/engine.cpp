@@ -1,6 +1,7 @@
 #include "engine.h"
 
 #include "../core/knock.h"
+#include "../core/snowball.h"
 
 #include <d3d11.h>
 #include <dcomp.h>
@@ -204,6 +205,21 @@ struct Engine::Impl {
   std::unordered_map<uint32_t, KnockRun> knockedAt;
   std::vector<HWND> destroyedTmp;
 
+  // Snowball being rolled with the mouse (only while LMB is held on a drift).
+  struct Ball {
+    bool active = false;   // being rolled right now
+    bool fading = false;   // released: shrinking away
+    uint64_t surface = 0;
+    Vec2 pos{};
+    float mass = 0, radius0 = 6, radius = 6, spin = 0;
+    float localPrev = 0;
+    double fadeStart = 0;
+  };
+  Ball ball;
+  HHOOK mouseHook = nullptr;
+  static Impl* hookOwner;
+  double ballLastNow = 0;
+
   HANDLE timer = nullptr;
   bool hiResTimer = false;
   double lastTarget = 0, prevSimTime = 0;
@@ -270,6 +286,11 @@ struct Engine::Impl {
   bool DrawHarness(const Overlay& ov);
   bool DrawDebug(const Overlay& ov, const FrameTiming& ft);
   bool DrawDecorateUi(const Overlay& ov);
+  // Snowball rolling: press on a snow drift, drag to scoop it up and grow.
+  static LRESULT CALLBACK MouseHookProc(int code, WPARAM w, LPARAM l);
+  bool OnSnowballMouse(UINT msg, POINT pt);  // true = swallow the click
+  void UpdateSnowball(double now, float dt);
+  bool SnowballSurfaceAt(POINT pt, const Surface*& out, float& localX) const;
   void ClearWindowRect(const WindowInput& w);
   IDWriteTextFormat* Format(std::unordered_map<int, ComPtr<IDWriteTextFormat>>& cache, const wchar_t* family,
                             float size, float scale, bool bold);
@@ -277,6 +298,8 @@ struct Engine::Impl {
   Color SnowColor() const;
   void EnsureLabels();
 };
+
+Engine::Impl* Engine::Impl::hookOwner = nullptr;
 
 // ============================================================== Engine API
 
@@ -1804,6 +1827,14 @@ bool Engine::Impl::RenderOverlay(Overlay& ov, const FrameTiming& ft) {
       }
       content = true;
     }
+    if ((ball.active || ball.fading) && ov.rect.containsF(ball.pos.x, ball.pos.y)) {
+      float r = ball.radius;
+      if (ball.fading) r *= std::max(0.f, 1.f - static_cast<float>((ballLastNow - ball.fadeStart) / 0.35));
+      if (r > 0.5f) {
+        decorR.DrawSnowball(f, D2D1::Point2F(ball.pos.x, ball.pos.y), r, ball.spin);
+        content = true;
+      }
+    }
     if (c.decorateMode && DrawDecorateUi(ov)) content = true;
   }
   if ((c.settings.debugOverlay || opts.debug) && !opts.harness && DrawDebug(ov, ft)) content = true;
@@ -1829,6 +1860,108 @@ bool Engine::Impl::RenderOverlay(Overlay& ov, const FrameTiming& ft) {
   return true;
 }
 
+
+// ---------------------------------------------------------------- snowballs
+
+LRESULT CALLBACK Engine::Impl::MouseHookProc(int code, WPARAM w, LPARAM l) {
+  if (code < 0 || !hookOwner) return CallNextHookEx(nullptr, code, w, l);
+  if (w == WM_LBUTTONDOWN || w == WM_LBUTTONUP) {
+    auto* ms = reinterpret_cast<MSLLHOOKSTRUCT*>(l);
+    POINT pt{ms->pt.x, ms->pt.y};
+    if (hookOwner->OnSnowballMouse(static_cast<UINT>(w), pt)) return 1;  // swallow only over a drift
+  }
+  return CallNextHookEx(nullptr, code, w, l);
+}
+
+bool Engine::Impl::SnowballSurfaceAt(POINT pt, const Surface*& out, float& localX) const {
+  out = nullptr;
+  localX = 0.f;
+  if (!c.settings.extras.snowballs) return false;
+  // drawOrder is bottom to top: the last match is the edge the user sees.
+  for (const Surface* s : world.drawOrder()) {
+    const float lx = static_cast<float>(pt.x) - static_cast<float>(s->rect.left);
+    const float h = s->pile.heightAt(std::clamp(lx, 0.f, s->pile.width()));
+    const float above = (static_cast<float>(s->rect.top) - h) - static_cast<float>(pt.y);
+    if (SnowballGrabAt(s->pile, lx, above, s->scale)) {
+      out = s;
+      localX = lx;
+    }
+  }
+  return out != nullptr;
+}
+
+bool Engine::Impl::OnSnowballMouse(UINT msg, POINT pt) {
+  if (c.decorateMode || c.paused || !c.settings.extras.snowballs) {
+    ball.active = false;
+    ball.fading = false;
+    return false;
+  }
+  if (msg == WM_LBUTTONDOWN) {
+    const Surface* s = nullptr;
+    float lx = 0.f;
+    if (!SnowballSurfaceAt(pt, s, lx)) return false;  // empty desk / snowy caption: let the click through
+    ball = Ball();
+    ball.active = true;
+    ball.surface = s->id;
+    ball.radius0 = std::max(4.f, 5.f * s->scale);
+    ball.radius = ball.radius0;
+    ball.localPrev = lx;
+    ball.pos = Vec2(static_cast<float>(pt.x), static_cast<float>(s->rect.top) - s->pile.heightAt(lx));
+    // The first handful right under the cursor.
+    ball.mass += world.carvePile(s->id, std::clamp(lx - ball.radius0, 0.f, s->pile.width()),
+                                 std::clamp(lx + ball.radius0, 0.f, s->pile.width()));
+    ball.radius = SnowballRadius(ball.mass, ball.radius0);
+    return true;
+  }
+  if (msg == WM_LBUTTONUP) {
+    if (!ball.active) return false;
+    ball.active = false;
+    ball.fading = true;
+    ball.fadeStart = ballLastNow;
+    return true;
+  }
+  return false;
+}
+
+void Engine::Impl::UpdateSnowball(double now, float dt) {
+  ballLastNow = now;
+  if (ball.fading) {
+    if (now - ball.fadeStart > 0.35) ball.fading = false;
+    return;
+  }
+  if (!ball.active) return;
+  if (c.decorateMode || c.paused || !c.settings.extras.snowballs) {
+    ball.active = false;
+    return;
+  }
+  const Surface* s = world.surface(ball.surface);
+  if (!s || s->pile.empty()) {
+    if (!s) ball.active = false;
+  }
+  POINT pt{};
+  if (!GetCursorPos(&pt)) return;
+  if (!s) return;
+  const float lx = std::clamp(static_cast<float>(pt.x) - static_cast<float>(s->rect.left), 0.f, s->pile.width());
+  // Carve every column the ball rolls over (interpolated so fast strokes miss nothing).
+  const float from = ball.localPrev;
+  const float step = std::max(3.f, ball.radius0);
+  const int n = std::max(1, static_cast<int>(std::fabs(lx - from) / step) + 1);
+  float collected = 0.f;
+  for (int i = 1; i <= n; ++i) {
+    const float mid = from + (lx - from) * static_cast<float>(i) / static_cast<float>(n);
+    const float a = std::clamp(mid - ball.radius0, 0.f, s->pile.width());
+    const float b = std::clamp(mid + ball.radius0, 0.f, s->pile.width());
+    collected += world.carvePile(ball.surface, a, b);
+  }
+  ball.mass += collected;
+  ball.radius = SnowballRadius(ball.mass, ball.radius0);
+  ball.spin += (lx - from) / std::max(4.f, ball.radius);
+  ball.localPrev = lx;
+  // Rolls on top of what is left of the drift; with no snow it just rides the edge.
+  ball.pos = Vec2(static_cast<float>(pt.x), static_cast<float>(s->rect.top) - s->pile.heightAt(lx) - ball.radius * 0.35f);
+  (void)dt;
+}
+
 bool Engine::Impl::Frame(const FrameTiming& ft) {
   ++frameNo;
   double t0 = ft.sample;
@@ -1847,6 +1980,7 @@ bool Engine::Impl::Frame(const FrameTiming& ft) {
   world.setCursor(cursorOk ? Vec2(static_cast<float>(cp.x), static_cast<float>(cp.y)) : Vec2(), cursorOk);
   double dt = prevSimTime > 0 ? ft.target - prevSimTime : 1.0 / 60;
   world.update(ft.target, static_cast<float>(clampd(dt, 0.0, 0.1)), inputs);
+  UpdateSnowball(ft.target, static_cast<float>(clampd(dt, 0.0, 0.1)));
   UpdateDecor(ft.target);
   prevSimTime = ft.target;
 
@@ -1918,6 +2052,9 @@ void Engine::Impl::Run() {
   costHist.fill(0.002);
   OpenSharedStats();
   RegisterClass();
+  hookOwner = this;
+  mouseHook = SetWindowsHookExW(WH_MOUSE_LL, &Impl::MouseHookProc, GetModuleHandleW(nullptr), 0);
+  if (!mouseHook) Log("engine: snowball mouse hook failed (%lu)", GetLastError());
   PullShared();
   world.seed(GetTickCount64());
   actors.seed(GetTickCount64() ^ 0x9E3779B97F4A7C15ULL);
@@ -1971,6 +2108,11 @@ void Engine::Impl::Run() {
     }
   }
 
+  if (mouseHook) {
+    UnhookWindowsHookEx(mouseHook);
+    mouseHook = nullptr;
+  }
+  hookOwner = nullptr;
   LogStats(true);
   DestroyOverlays();
   ReleaseDevice();

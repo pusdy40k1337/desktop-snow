@@ -110,6 +110,8 @@ enum class UiStr : int {
   DescTrain,
   SettingTrainKnocks,
   DescTrainKnocks,
+  SettingSnowballs,
+  DescSnowballs,
   SettingYeti,
   DescYeti,
   SettingCallNow,

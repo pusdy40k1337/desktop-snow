@@ -67,6 +67,9 @@ class PileModel {
                     std::vector<PileDebris>& out);
   // Slow uniform melting, px per second.
   void melt(float pxPerSecond, float dt);
+  // Snowball rolling: takes ALL snow in [x0, x1) local px (a ball scoops the
+  // snow it rolls over). Returns the collected mass (height-px summed).
+  float carveRange(float x0, float x1);
   void clear();
 
  private:

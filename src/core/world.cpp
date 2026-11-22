@@ -259,6 +259,12 @@ void World::kick(uint64_t surfaceId, float impulse) {
   if (it != surfaces_.end()) it->second.wobbleVel += impulse;
 }
 
+float World::carvePile(uint64_t surfaceId, float x0, float x1) {
+  auto it = surfaces_.find(surfaceId);
+  if (it == surfaces_.end()) return 0.f;
+  return it->second.pile.carveRange(x0, x1);
+}
+
 void World::puff(Vec2 at, int count, float scale) {
   for (int i = 0; i < count && static_cast<int>(particles_.size()) < s_.maxParticles; ++i) {
     Particle p;
