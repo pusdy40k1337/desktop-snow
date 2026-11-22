@@ -86,7 +86,7 @@ PaletteLayout LayoutPalette(const RectI& work, float dpiScale, int left, int top
   }
   int barLeft = work.left + static_cast<int>((work.width() - total) / 2);
   int barTop = work.top + static_cast<int>(16.f * dpiScale);
-  if (left >= 0 && top >= 0) {
+  if (!(left == -1 && top == -1)) {
     barLeft = left;
     barTop = top;
   }

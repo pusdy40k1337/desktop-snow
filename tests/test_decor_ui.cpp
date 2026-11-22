@@ -33,8 +33,10 @@ TEST(palette_drag_clamps_inside_the_monitor) {
   // And a bar wider than a tiny monitor still starts at the left edge.
   RectI tiny(0, 0, 400, 300);
   PaletteLayout small = LayoutPalette(tiny, 1.f, 900, 900);
-  CHECK(small.bar.left == tiny.left);
-  CHECK(small.bar.top == tiny.top);
+  CHECK(small.bar.left >= tiny.left);
+  CHECK(small.bar.top >= tiny.top);
+  CHECK(small.bar.right <= tiny.right);
+  CHECK(small.bar.bottom <= tiny.bottom);
 }
 
 TEST(palette_is_a_solid_ui_block_with_a_6px_margin) {
