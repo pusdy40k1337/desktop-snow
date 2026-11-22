@@ -103,9 +103,14 @@ TEST(fullscreen_looks_through_floating_and_topmost_windows) {
   pip.topmost = true;
   FsWindow video = Fw(kM1);
   CHECK(DetectFullscreen({Mon(kM1, kW1)}, {controls, pip, video}, ShellNotifyState::Normal)[0]);
-  // An ordinary window on top: the user is working, not watching.
+  // An ordinary window on top no longer resumes the snow: opening WinRAR or a
+  // file dialog over a fullscreen Chrome/video must keep the monitor paused.
   FsWindow notepad = Fw(RectI(100, 100, 900, 700));
-  CHECK(!DetectFullscreen({Mon(kM1, kW1)}, {notepad, video}, ShellNotifyState::Normal)[0]);
+  CHECK(DetectFullscreen({Mon(kM1, kW1)}, {notepad, video}, ShellNotifyState::Normal)[0]);
+  // But a merely maximised window underneath is not a fullscreen app.
+  FsWindow maxBelow = Fw(kW1);
+  maxBelow.zoomed = maxBelow.captioned = true;
+  CHECK(!DetectFullscreen({Mon(kM1, kW1)}, {notepad, maxBelow}, ShellNotifyState::Normal)[0]);
 }
 
 TEST(fullscreen_is_per_monitor) {

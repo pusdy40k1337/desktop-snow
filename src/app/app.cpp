@@ -966,27 +966,17 @@ void App::DecorClick(POINT pt) {
     case Tool::Snowman:
       if (!man) {
         if (static_cast<int>(d.snowmen.size()) >= kMaxSnowmen) break;
-        WindowAnchor anc;
-        float relX = 0.5f;
-        bool over = false;
-        AnchorAt(pt, anc, relX, &over);
         SnowmanDecor s;
         s.id = d.nextId++;
         const float h = SnowmanHeightPx(1.f, dpi);
-        if (over) {
-          s.free = false;
-          s.anchor = anc;
-          s.relX = relX;
-        } else {
-          s.free = true;
-          s.monitor = monId;
-          const float baseX = clampf(static_cast<float>(pt.x), static_cast<float>(work.left) + 0.3f * h,
-                                     static_cast<float>(work.right) - 0.3f * h);
-          const float baseY = clampf(static_cast<float>(pt.y), static_cast<float>(work.top) + h,
-                                     static_cast<float>(work.bottom));
-          s.nx = clampf((baseX - static_cast<float>(work.left)) / static_cast<float>(std::max(1, work.width())), 0.f, 1.f);
-          s.ny = clampf((baseY - static_cast<float>(work.top)) / static_cast<float>(std::max(1, work.height())), 0.f, 1.f);
-        }
+        s.free = true;
+        s.monitor = monId;
+        const float baseX = clampf(static_cast<float>(pt.x), static_cast<float>(work.left) + 0.3f * h,
+                                   static_cast<float>(work.right) - 0.3f * h);
+        const float baseY = clampf(static_cast<float>(pt.y), static_cast<float>(work.top) + h,
+                                   static_cast<float>(work.bottom));
+        s.nx = clampf((baseX - static_cast<float>(work.left)) / static_cast<float>(std::max(1, work.width())), 0.f, 1.f);
+        s.ny = clampf((baseY - static_cast<float>(work.top)) / static_cast<float>(std::max(1, work.height())), 0.f, 1.f);
         s.hat = 1;
         s.hatColor = colorCycle_ % kDecorColorCount;
         s.scarf = colorCycle_++ % kDecorColorCount;
@@ -1182,27 +1172,17 @@ LRESULT App::HandleCatcher(HWND h, UINT m, WPARAM w, LPARAM l) {
               t.ny = clampf((by - static_cast<float>(work.top)) / static_cast<float>(std::max(1, work.height())), 0.f, 1.f);
             }
           } else if (dragKind_ == DragKind::Snowman) {
-            WindowAnchor anc;
-            float relX = 0.5f;
-            bool over = false;
-            AnchorAt(pt, anc, relX, &over);
             for (auto& s : d.snowmen) {
               if (s.id != dragId_) continue;
-              if (over) {
-                s.free = false;
-                s.anchor = anc;
-                s.relX = relX;
-              } else {
-                float hh = SnowmanHeightPx(s.scale, dpi);
-                float bx = clampf(static_cast<float>(pt.x) - dragOffX_, static_cast<float>(work.left) + 0.3f * hh,
-                                  static_cast<float>(work.right) - 0.3f * hh);
-                float by = clampf(static_cast<float>(pt.y) - dragOffY_, static_cast<float>(work.top) + hh,
-                                  static_cast<float>(work.bottom));
-                s.free = true;
-                s.monitor = Narrow(mi2.szDevice);
-                s.nx = clampf((bx - static_cast<float>(work.left)) / static_cast<float>(std::max(1, work.width())), 0.f, 1.f);
-                s.ny = clampf((by - static_cast<float>(work.top)) / static_cast<float>(std::max(1, work.height())), 0.f, 1.f);
-              }
+              float hh = SnowmanHeightPx(s.scale, dpi);
+              float bx = clampf(static_cast<float>(pt.x) - dragOffX_, static_cast<float>(work.left) + 0.3f * hh,
+                                static_cast<float>(work.right) - 0.3f * hh);
+              float by = clampf(static_cast<float>(pt.y) - dragOffY_, static_cast<float>(work.top) + hh,
+                                static_cast<float>(work.bottom));
+              s.free = true;
+              s.monitor = Narrow(mi2.szDevice);
+              s.nx = clampf((bx - static_cast<float>(work.left)) / static_cast<float>(std::max(1, work.width())), 0.f, 1.f);
+              s.ny = clampf((by - static_cast<float>(work.top)) / static_cast<float>(std::max(1, work.height())), 0.f, 1.f);
             }
           } else if (dragKind_ == DragKind::Free) {
             for (auto& fr : d.free) {
