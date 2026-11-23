@@ -70,6 +70,23 @@ struct PauseDecision {
 std::vector<PauseDecision> DecidePause(const std::vector<FsMonitor>& monitors, const std::vector<FsWindow>& windows,
                                        ShellNotifyState shell, const PauseOptions& options);
 
+// Shell windows that float over the desktop (taskbar thumbnails, Task View,
+// the overflow flyout). They must never host snow, clip the taskbar drift or
+// influence the pause decision.
+inline bool IsShellOverlayWindowClass(const std::string& cls) {
+  return cls == "TaskListThumbnailWnd" || cls == "MultitaskingViewFrame" ||
+         cls == "XamlExplorerHostIslandWindow" || cls == "NotifyIconOverflowWindow" ||
+         cls == "Windows.UI.Core.CoreWindow";
+}
+
+// A window that is in (or is starting) the maximise animation counts as
+// maximised from the first frame: GetWindowPlacement reports SW_SHOWMAXIMIZED
+// (3) or WPF_RESTORETOMAXIMIZED (0x0002) while IsZoomed may still be false
+// during the Windows animation.
+inline bool PlacementSaysMaximized(int showCmd, unsigned flags) {
+  return showCmd == 3 || (flags & 0x0002u) != 0;
+}
+
 // Fullscreen only (maximised windows ignored): one flag per monitor.
 std::vector<bool> DetectFullscreen(const std::vector<FsMonitor>& monitors, const std::vector<FsWindow>& windows,
                                    ShellNotifyState shell);

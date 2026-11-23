@@ -226,6 +226,8 @@ struct Engine::Impl {
     bool held = false;
     uint32_t atopOf = 0;  // ball id this one rests on (0 = on the edge)
     int stack = 0;        // how many balls rest on this one
+    bool pendingTier = false;  // two balls stacked: wait briefly for a third
+    double tierAt = 0;
     double hitT0 = -1;    // train knock start time, < 0 = not hit
     int hitDir = 1;
   };
@@ -236,6 +238,7 @@ struct Engine::Impl {
   Ball* BallUnder(POINT pt);
   Vec2 BallPos(const Ball& b) const;
   void KnockBalls(double now, const TrainHitBox& hb);
+  void SpawnSnowmanFromTower(Ball& base, double now);
   HHOOK mouseHook = nullptr;
   static Impl* hookOwner;
   double ballLastNow = 0;

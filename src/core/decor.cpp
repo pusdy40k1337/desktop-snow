@@ -31,6 +31,27 @@ bool TreeScreenToLocal(Vec2 base, float height, Vec2 p, float& u, float& v) {
   return u >= 0.f && u <= 1.f && v >= 0.f && v <= 1.f;
 }
 
+SnowmanParts SnowmanProportions(const SnowmanDecor& sm) {
+  SnowmanParts p;
+  const bool custom = sm.rBottom > 0.01f;
+  if (!custom) return p;  // classic constants, byte-identical to the old look
+  p.layers = sm.layers == 2 ? 2 : 3;
+  p.rb = clampf(sm.rBottom, 0.06f, 0.48f);
+  p.rm = p.layers == 3 ? clampf(sm.rMiddle, 0.04f, 0.40f) : 0.f;
+  p.rh = clampf(sm.rTop > 0.01f ? sm.rTop : 0.112f, 0.04f, 0.34f);
+  const float ovMid = 0.22f * std::min(p.rb, p.rm);
+  const float ovTop = 0.22f * std::min(p.layers == 3 ? p.rm : p.rb, p.rh);
+  p.cbY = -p.rb;
+  if (p.layers == 3) {
+    p.cmY = p.cbY - p.rb - p.rm + ovMid;
+    p.chY = p.cmY - p.rm - p.rh + ovTop;
+  } else {
+    p.cmY = p.cbY;
+    p.chY = p.cbY - p.rb - p.rh + ovTop;
+  }
+  return p;
+}
+
 SnowmanBox SnowmanBounds(Vec2 base, float height) {
   return {base.x - 0.30f * height, base.y - height, base.x + 0.30f * height, base.y};
 }

@@ -61,7 +61,26 @@ struct SnowmanDecor {
   bool free = false;         // free-standing anywhere on the desktop
   std::string monitor;       // free: monitor device name (empty = primary)
   float nx = 0.5f, ny = 1.0f;  // free: base point normalized to the work area
+  // A snowman rolled from real snowballs keeps the radii the user built it
+  // with (fractions of its height, 0 = the classic proportions), and how many
+  // ball tiers it has (2 = body + head, 3 = body + middle + head).
+  float rBottom = 0.f;
+  float rMiddle = 0.f;
+  float rTop = 0.f;
+  int layers = 3;
 };
+
+// Unit-space placement of the balls (1 = full height, y = 0 at the base).
+// Classic snowmen keep the exact original numbers; snowmen built from rolled
+// balls use their saved radii and stack without gaps:
+//   y_i = y_{i-1} - r_{i-1} - r_i + overlap
+struct SnowmanParts {
+  int layers = 3;
+  float rb = 0.200f, rm = 0.150f, rh = 0.112f;
+  float cbY = -0.200f, cmY = -0.515f, chY = -0.747f;
+};
+
+SnowmanParts SnowmanProportions(const SnowmanDecor& sm);
 
 struct DecorState {
   std::vector<TreeDecor> trees;

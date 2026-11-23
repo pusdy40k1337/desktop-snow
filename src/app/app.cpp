@@ -230,12 +230,18 @@ std::vector<FsWindow> FullscreenCandidates(std::vector<HWND>& hwnds, HWND ownAll
         }
         std::string cls = WindowClass(h);
         if (cls == "Shell_TrayWnd" || cls == "Shell_SecondaryTrayWnd" || IsShellPopupClass(cls)) return TRUE;
+        // Shell thumbnails / tool popups must not influence the pause decision.
+        if ((ex & WS_EX_TOOLWINDOW) && (style & WS_CAPTION) != WS_CAPTION) return TRUE;
         RECT r;
         if (!GetFrameBounds(h, r) || r.right - r.left < 2 || r.bottom - r.top < 2) return TRUE;
         FsWindow w;
         w.frame = RectI(r.left, r.top, r.right, r.bottom);
         w.topmost = (ex & WS_EX_TOPMOST) != 0;
-        w.zoomed = IsZoomed(h) != FALSE;
+        WINDOWPLACEMENT wp{};
+        wp.length = sizeof(wp);
+        const bool placedMax = GetWindowPlacement(h, &wp) && PlacementSaysMaximized(wp.showCmd, wp.flags);
+        // Pause from the first frame of the restore animation, not after it.
+        w.zoomed = IsZoomed(h) != FALSE || placedMax;
         w.captioned = (style & WS_CAPTION) == WS_CAPTION;
         w.floating = (ex & WS_EX_TOOLWINDOW) != 0 || GetWindow(h, GW_OWNER) != nullptr;
         w.foreground = h == c->fgRoot;

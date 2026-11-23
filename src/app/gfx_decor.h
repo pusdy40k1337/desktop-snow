@@ -41,6 +41,9 @@ class DecorRenderer {
   // core/knock.h and is rebuilt on the spot when the tumble ends.
   void DrawSnowmanBroken(const DecorFrame& f, const SnowmanDecor& sm, D2D1_POINT_2F base, float height,
                          double t, int dir, uint32_t seed);
+  // Snowman assembled from rolled balls: keeps the user's actual radii.
+  void DrawSnowmanCustom(const DecorFrame& f, const SnowmanDecor& sm, D2D1_POINT_2F base, float height,
+                         float wobble, bool highlight);
 
   void DrawSanta(const DecorFrame& f, const SantaState& s);
   void DrawTrain(const DecorFrame& f, const TrainState& t);

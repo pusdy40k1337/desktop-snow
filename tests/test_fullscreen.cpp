@@ -466,3 +466,20 @@ TEST(pause_snapped_windows_covering_the_work_area) {
   off.maximized = false;
   CHECK(!Decide1({left, right}, off).pause);
 }
+
+TEST(pause_placement_reports_maximize_during_the_animation) {
+  // Win32 values: SW_SHOWMAXIMIZED = 3, WPF_RESTORETOMAXIMIZED = 0x0002.
+  CHECK(PlacementSaysMaximized(3, 0));
+  CHECK(PlacementSaysMaximized(1, 0x0002u));
+  CHECK(!PlacementSaysMaximized(1, 0));
+}
+
+TEST(shell_overlay_windows_are_never_snow_surfaces) {
+  CHECK(IsShellOverlayWindowClass("TaskListThumbnailWnd"));
+  CHECK(IsShellOverlayWindowClass("MultitaskingViewFrame"));
+  CHECK(IsShellOverlayWindowClass("XamlExplorerHostIslandWindow"));
+  CHECK(IsShellOverlayWindowClass("NotifyIconOverflowWindow"));
+  CHECK(IsShellOverlayWindowClass("Windows.UI.Core.CoreWindow"));
+  CHECK(!IsShellOverlayWindowClass("Chrome_WidgetWin_1"));
+  CHECK(!IsShellOverlayWindowClass("Shell_TrayWnd"));
+}

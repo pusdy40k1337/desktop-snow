@@ -80,6 +80,12 @@ struct SnowballSnowmanSpawn {
   float relX = 0.5f;      // 0..1 along the edge
   float scale = 1.f;      // DPI scale of the surface
   bool taskbar = false;   // the tower stands on the taskbar
+  // Radii of the balls the user actually rolled, as fractions of the height,
+  // plus how many tiers the tower has (2 = body + head, 3 = with the middle).
+  float fBottom = 0.20f;
+  float fMiddle = 0.15f;
+  float fTop = 0.112f;
+  int layers = 3;
 };
 
 class Engine {

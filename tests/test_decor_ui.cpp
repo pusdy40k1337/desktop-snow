@@ -100,3 +100,35 @@ TEST(decor_clear_all_versus_snowmen_only) {
   CHECK(d.snowmen.empty());
   CHECK(d.free.empty());
 }
+
+TEST(snowman_from_balls_keeps_its_radii) {
+  SnowmanDecor sm;
+  // Huge bottom, medium middle, small top, as rolled by hand.
+  sm.rBottom = 0.26f;
+  sm.rMiddle = 0.15f;
+  sm.rTop = 0.09f;
+  sm.layers = 3;
+  const SnowmanParts p = SnowmanProportions(sm);
+  CHECK(p.layers == 3);
+  CHECK_NEAR(p.rb, 0.26, 1e-4);
+  CHECK_NEAR(p.rm, 0.15, 1e-4);
+  CHECK_NEAR(p.rh, 0.09, 1e-4);
+  // Stacked without gaps: each centre is one ball below the previous one.
+  CHECK_NEAR(p.cmY, p.cbY - p.rb - p.rm + 0.22f * std::min(p.rb, p.rm), 1e-4);
+  CHECK_NEAR(p.chY, p.cmY - p.rm - p.rh + 0.22f * std::min(p.rm, p.rh), 1e-4);
+  CHECK(p.cmY < p.cbY);
+  CHECK(p.chY < p.cmY);
+  // Two tiers: body + head only, no middle ball.
+  SnowmanDecor two = sm;
+  two.layers = 2;
+  const SnowmanParts q = SnowmanProportions(two);
+  CHECK(q.layers == 2);
+  CHECK(q.rm == 0.f);
+  CHECK(q.chY < q.cbY);
+  // Classic snowmen keep the original constants.
+  SnowmanDecor classic;
+  const SnowmanParts c = SnowmanProportions(classic);
+  CHECK_NEAR(c.rb, 0.200, 1e-6);
+  CHECK_NEAR(c.cmY, -0.515, 1e-6);
+  CHECK_NEAR(c.chY, -0.747, 1e-6);
+}
