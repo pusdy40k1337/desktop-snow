@@ -52,18 +52,19 @@ struct PauseDecision {
 // taskbars, shell popups (Alt+Tab, Start), click-through overlays and our own
 // overlay windows. Returns one decision per monitor.
 //
-// Per monitor, the first window on it decides:
-//  - it covers the whole monitor -> Fullscreen (a maximised window with a title
-//    bar that stays inside the work area is Maximized instead: it only reaches
-//    the monitor edges when the monitor has no taskbar);
-//  - it covers the whole work area (maximised, snapped full size, borderless
-//    maximised) -> Maximized;
-//  - always-on-top and floating windows that cover neither (picture-in-picture,
-//    player controls) are looked through;
-//  - any other window on top -> None: the user is working there.
-// A window that fills the monitor *below* the top one keeps Fullscreen: opening
-// WinRAR or a file dialog over a fullscreen Chrome/video must not resume the
-// snow (rule "covers the monitor (under the top window)").
+// Per monitor the whole z-order is inspected, not just the top window:
+//  - any window that covers the monitor -> Fullscreen (a maximised window with
+//    a title bar that stays inside the work area is Maximized instead: it only
+//    reaches the monitor edges when the monitor has no taskbar);
+//  - otherwise any window that covers the whole work area (maximised, snapped
+//    full size, borderless maximised) -> Maximized;
+//  - otherwise the top window decides: always-on-top and floating windows that
+//    cover neither are looked through, any other window means None (the user is
+//    working there).
+// A fullscreen or maximised window *below* the top one keeps its pause: opening
+// WinRAR, a file dialog or Spotify over a fullscreen Chrome/video, or a small
+// window over a maximised browser, must not resume the snow (rules
+// "covers the monitor (any z-order)" and "maximized (zoomed)").
 // The shell's presentation mode pauses every monitor; exclusive-mode D3D pauses
 // the foreground window's monitor (all of them when that is unknown).
 std::vector<PauseDecision> DecidePause(const std::vector<FsMonitor>& monitors, const std::vector<FsWindow>& windows,

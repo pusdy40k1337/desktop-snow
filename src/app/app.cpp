@@ -1118,8 +1118,13 @@ LRESULT App::HandleCatcher(HWND h, UINT m, WPARAM w, LPARAM l) {
       const RectI work(mi.rcWork.left, mi.rcWork.top, mi.rcWork.right, mi.rcWork.bottom);
       const float dpi = MonitorScale(mon);
       auto overUi = [&](const PaletteLayout& pl, const RectI& hint) {
-        if (PaletteUiHit(pl, pt.x, pt.y, 6)) return true;
-        return pt.x >= hint.left - 6 && pt.x < hint.right + 6 && pt.y >= hint.top - 6 && pt.y < hint.bottom + 6;
+        if (PaletteUiHit(pl, pt.x, pt.y, 8)) return true;
+        if (pt.x >= hint.left - 8 && pt.x < hint.right + 8 && pt.y >= hint.top - 8 && pt.y < hint.bottom + 8) return true;
+        if (colorPopup_.open) {
+          ColorPickerLayout cp = LayoutColorPicker(colorPopup_.at.x, colorPopup_.at.y, work, dpi);
+          if (ColorPickerUiHit(cp, pt.x, pt.y, 8)) return true;
+        }
+        return false;
       };
       if (m == WM_MOUSEMOVE && paletteDrag_) {
         const int left = static_cast<int>(pt.x - paletteGrabX_);
@@ -1140,13 +1145,14 @@ LRESULT App::HandleCatcher(HWND h, UINT m, WPARAM w, LPARAM l) {
           ColorPickerLayout cp = LayoutColorPicker(colorPopup_.at.x, colorPopup_.at.y, work, dpi);
           const int sw = ColorPickerHit(cp, pt.x, pt.y, 2);
           if (sw >= 0) {
+            // Keep the popup open and still bound to the same hat/scarf: every
+            // further swatch click recolours that item instead of falling
+            // through to the canvas and spawning a duplicate.
             ApplyPickerColor(sw);
-            colorPopup_.open = false;
-            PushConfig();
             swallowUp_ = true;
             return 0;
           }
-          if (ColorPickerUiHit(cp, pt.x, pt.y, 6)) {
+          if (ColorPickerUiHit(cp, pt.x, pt.y, 8)) {
             swallowUp_ = true;  // inside the popup frame: keep it open if not on a swatch
             return 0;
           }
@@ -1179,7 +1185,7 @@ LRESULT App::HandleCatcher(HWND h, UINT m, WPARAM w, LPARAM l) {
           swallowUp_ = true;
           return 0;
         }
-        if (overUi(pl, hint) && !PaletteUiHit(pl, pt.x, pt.y, 6)) {
+        if (overUi(pl, hint) && !PaletteUiHit(pl, pt.x, pt.y, 8)) {
           swallowUp_ = true;  // the hint plate swallows clicks too
           return 0;
         }
@@ -1391,6 +1397,24 @@ LRESULT App::Handle(HWND h, UINT m, WPARAM w, LPARAM l) {
       std::vector<SnowmanUpdate> ups;
       engine_.TakeSnowmanUpdates(ups);
       bool changed = false;
+      // Balls stacked three high turn into a real snowman on that edge.
+      std::vector<SnowballSnowmanSpawn> ballSpawns;
+      engine_.TakeSnowballSpawns(ballSpawns);
+      for (const auto& sp : ballSpawns) {
+        if (static_cast<int>(state_.decor.snowmen.size()) >= kMaxSnowmen) break;
+        SnowmanDecor s;
+        s.id = state_.decor.nextId++;
+        s.free = false;
+        s.anchor.taskbar = sp.taskbar;
+        s.anchor.hwnd = sp.surface;
+        s.relX = clampf(sp.relX, 0.05f, 0.95f);
+        s.scale = 1.f;
+        s.hat = 1;
+        s.hatColor = state_.settings.decorColor >= 0 ? state_.settings.decorColor % kDecorColorCount : 0;
+        s.scarf = state_.settings.decorColor >= 0 ? state_.settings.decorColor % kDecorColorCount : 0;
+        state_.decor.snowmen.push_back(s);
+        changed = true;
+      }
       for (const auto& up : ups) {
         for (auto& s : state_.decor.snowmen) {
           if (s.id != up.id) continue;

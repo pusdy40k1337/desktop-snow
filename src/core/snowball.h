@@ -38,9 +38,14 @@ inline bool SnowballGrabAt(const PileModel& pile, float localX, float above, flo
 }
 
 // Ball radius from the snow it has collected (mass = height-px summed over the
-// carved columns). Starts at `radius0`, grows quickly at first, then saturates.
+// carved columns). Starts at `radius0`, grows quickly - ~1.5-2 s of rolling
+// makes a proper big ball - then saturates so it cannot eat the whole drift.
+constexpr float kSnowballGrowth = 240.f;
+constexpr float kSnowballMaxRadiusFactor = 7.5f;
+
 inline float SnowballRadius(float mass, float radius0) {
-  return radius0 * std::sqrt(1.f + std::max(0.f, mass) / 900.f);
+  const float r = radius0 * std::sqrt(1.f + std::max(0.f, mass) / kSnowballGrowth);
+  return std::min(r, radius0 * kSnowballMaxRadiusFactor);
 }
 
 }  // namespace snow

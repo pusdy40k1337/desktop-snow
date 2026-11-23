@@ -70,3 +70,12 @@ TEST(snowball_radius_grows_with_collected_snow) {
   // Saturating growth: doubling mass never doubles the radius.
   CHECK(b < 2.f * a);
 }
+
+TEST(snowball_grows_into_a_big_ball_quickly_and_stops) {
+  const float r0 = 5.f;
+  CHECK_NEAR(SnowballRadius(0.f, r0), r0, 1e-4);
+  // ~1.5 s of rolling (a few hundred height-px scooped) makes a proper ball.
+  CHECK(SnowballRadius(800.f, r0) >= r0 * 2.0f);
+  CHECK(SnowballRadius(2000.f, r0) <= r0 * kSnowballMaxRadiusFactor + 1e-4f);
+  CHECK(SnowballRadius(1e6f, r0) == r0 * kSnowballMaxRadiusFactor);
+}

@@ -80,52 +80,43 @@ std::vector<PauseDecision> DecidePause(const std::vector<FsMonitor>& monitors, c
   for (size_t i = 0; i < monitors.size(); ++i) {
     if (decided[i]) continue;
     const FsMonitor& m = monitors[i];
-    // Pass 1: is something fullscreen *anywhere* on this monitor? The user who
-    // opens a small window (WinRAR, a file dialog) over a fullscreen Chrome or
-    // video is still inside that fullscreen app: the snow must stay paused.
-    int topIdx = -1;
+    // Any window on this monitor that covers the monitor is a fullscreen app,
+    // no matter where it sits in the z-order: the user who opens a small window
+    // (WinRAR, a file dialog, Spotify) over a fullscreen Chrome or video is
+    // still inside that fullscreen app and the snow must stay paused.
+    int coverIdx = -1, workIdx = -1, topIdx = -1;
     for (size_t k = 0; k < windows.size(); ++k) {
       const FsWindow& w = windows[k];
       RectI x = w.frame.intersect(m.rect);
       if (x.width() < kMinOverlap || x.height() < kMinOverlap) continue;
-      topIdx = static_cast<int>(k);
-      break;
-    }
-    int heldIdx = -1;
-    for (size_t k = 0; k < windows.size(); ++k) {
-      if (static_cast<int>(k) == topIdx) continue;
-      const FsWindow& w = windows[k];
-      RectI x = w.frame.intersect(m.rect);
-      if (x.width() < kMinOverlap || x.height() < kMinOverlap) continue;
-      if (Covers(w.frame, m.rect, kCoverTolerance) && !OrdinaryMaximised(w, m, kCoverTolerance)) {
-        heldIdx = static_cast<int>(k);
-        break;
-      }
-    }
-    if (heldIdx >= 0) {
-      out[i] = Decide(PauseReason::Fullscreen, "covers the monitor (under the top window)", heldIdx, options);
-      continue;
-    }
-    for (size_t k = 0; k < windows.size(); ++k) {
-      const FsWindow& w = windows[k];
-      RectI x = w.frame.intersect(m.rect);
-      if (x.width() < kMinOverlap || x.height() < kMinOverlap) continue;
+      if (topIdx < 0) topIdx = static_cast<int>(k);
       // The shell's own "busy" verdict tolerates apps that stop a little further short.
       int tol = kCoverTolerance + (w.foreground && shell == ShellNotifyState::Busy ? 2 : 0);
-      int idx = static_cast<int>(k);
-      bool ordinaryMaximised = OrdinaryMaximised(w, m, tol);
-      if (Covers(w.frame, m.rect, tol) && !ordinaryMaximised) {
-        out[i] = Decide(PauseReason::Fullscreen, "covers the monitor", idx, options);
-        break;
-      }
-      if (Covers(w.frame, m.work, tol)) {
-        out[i] = Decide(PauseReason::Maximized, w.zoomed ? "maximized (zoomed)" : "covers the work area", idx, options);
-        break;
-      }
-      if (w.topmost || w.floating) continue;
-      out[i] = Decide(PauseReason::None, "top window does not cover", idx, options);
-      break;
+      if (coverIdx < 0 && Covers(w.frame, m.rect, tol) && !OrdinaryMaximised(w, m, tol))
+        coverIdx = static_cast<int>(k);
+      if (workIdx < 0 && Covers(w.frame, m.work, tol)) workIdx = static_cast<int>(k);
     }
+    if (coverIdx >= 0) {
+      out[i] = Decide(PauseReason::Fullscreen, "covers the monitor (any z-order)", coverIdx, options);
+      continue;
+    }
+    // Same for the work area: a maximised browser stays paused when a small
+    // foreground window (Spotify, a chat) is opened on top of it.
+    if (workIdx >= 0) {
+      const FsWindow& w = windows[static_cast<size_t>(workIdx)];
+      out[i] = Decide(PauseReason::Maximized, w.zoomed ? "maximized (zoomed)" : "covers the work area", workIdx, options);
+      continue;
+    }
+    if (topIdx >= 0) {
+      const FsWindow& w = windows[static_cast<size_t>(topIdx)];
+      if (w.topmost || w.floating) {
+        out[i] = Decide(PauseReason::None, "no window", topIdx, options);
+        continue;
+      }
+      out[i] = Decide(PauseReason::None, "top window does not cover", topIdx, options);
+      continue;
+    }
+    out[i] = Decide(PauseReason::None, "no window", -1, options);
   }
   return out;
 }

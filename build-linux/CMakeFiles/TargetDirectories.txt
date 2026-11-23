@@ -1,0 +1,5 @@
+/home/ubuntu/projects/desktop-snow/build-linux/CMakeFiles/snowcore.dir
+/home/ubuntu/projects/desktop-snow/build-linux/CMakeFiles/snow_tests.dir
+/home/ubuntu/projects/desktop-snow/build-linux/CMakeFiles/test.dir
+/home/ubuntu/projects/desktop-snow/build-linux/CMakeFiles/edit_cache.dir
+/home/ubuntu/projects/desktop-snow/build-linux/CMakeFiles/rebuild_cache.dir

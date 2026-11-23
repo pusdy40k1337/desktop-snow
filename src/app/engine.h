@@ -73,6 +73,15 @@ struct SnowmanUpdate {
   WindowAnchor anchor;
 };
 
+// A tower of snowballs rolled into a snowman: the app turns it into a real
+// SnowmanDecor standing on that surface edge.
+struct SnowballSnowmanSpawn {
+  uint64_t surface = 0;   // HWND (0 = taskbar/ground)
+  float relX = 0.5f;      // 0..1 along the edge
+  float scale = 1.f;      // DPI scale of the surface
+  bool taskbar = false;   // the tower stands on the taskbar
+};
+
 class Engine {
  public:
   Engine();
@@ -84,6 +93,7 @@ class Engine {
   void Command(EngineCommand c);
   void GetDecorLayout(std::vector<DecorLayoutItem>& out);
   void TakeSnowmanUpdates(std::vector<SnowmanUpdate>& out);
+  void TakeSnowballSpawns(std::vector<SnowballSnowmanSpawn>& out);
   std::vector<HWND> OverlayWindows();
   double Fps() const;  // overlay frame rate over the last second (0 before the first second)
 

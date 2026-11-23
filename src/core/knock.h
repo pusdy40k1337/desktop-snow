@@ -3,6 +3,7 @@
 #pragma once
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 
 namespace snow {
 
@@ -30,7 +31,7 @@ inline bool TrainHitsSnowman(const TrainHitBox& box, float baseX, float baseY) {
 }
 
 // How long a knocked snowman tumbles before it is back on its feet.
-constexpr double kKnockDuration = 2.4;
+constexpr double kKnockDuration = 2.6;
 
 struct KnockPose {
   float dx = 0;   // px, along the train's direction
@@ -39,9 +40,22 @@ struct KnockPose {
   bool done = false;
 };
 
-// Deterministic ballistic tumble: up, spin, land, settle back exactly on the
-// spot. `dir` is the train direction (+1/-1); t is seconds since the hit.
-inline KnockPose KnockAt(double t, int dir) {
+// Deterministic per-object variation so a row of snowmen does not move in
+// lockstep: the same seed always gives the same throw.
+inline double KnockRand(uint32_t seed, double lo, double hi) {
+  uint32_t h = seed * 2654435761u + 0x9E3779B9u;
+  h ^= h >> 13;
+  h *= 0x85EBCA6Bu;
+  h ^= h >> 16;
+  const double u = static_cast<double>(h % 1000u) / 999.0;
+  return lo + (hi - lo) * u;
+}
+
+// Ballistic tumble: a real impulse along the train (a long, flat arc), height
+// from a real vertical kick, a fast spin that unwinds, and a smooth return to
+// the exact spot on its edge. `dir` is the train direction (+1/-1); t is
+// seconds since the hit. `seed` (usually the object id) varies the throw.
+inline KnockPose KnockAt(double t, int dir, uint32_t seed = 0) {
   KnockPose p;
   if (t <= 0) return p;
   if (t >= kKnockDuration) {
@@ -50,17 +64,17 @@ inline KnockPose KnockAt(double t, int dir) {
   }
   const double u = t / kKnockDuration;  // 0..1
   const double pi = 3.14159265358979;
-  const double g = 1500.0;
-  const double vy0 = -430.0;
+  const double g = 1700.0;
+  const double vy0 = -KnockRand(seed, 470.0, 560.0);
+  const double throwX = KnockRand(seed, 135.0, 185.0);
+  const double spin = KnockRand(seed, 5.5, 9.0) * static_cast<double>(dir);
   // Pushed along the train, then settles back on its spot.
-  p.dx = static_cast<float>(std::sin(u * pi) * 95.0 * static_cast<double>(dir));
-  double dy = vy0 * t + 0.5 * g * t * t;
+  p.dx = static_cast<float>(static_cast<double>(dir) * throwX * std::sin(std::pow(u, 0.85) * pi));
+  const double dy = vy0 * t + 0.5 * g * t * t;
   const double floorT = -2.0 * vy0 / g;  // first landing
-  if (t > floorT) dy = 0;                // rests on the ground after landing
-  p.dy = static_cast<float>(std::min(0.0, dy));
-  const double spin = 6.0 * static_cast<double>(dir);
+  p.dy = static_cast<float>(std::min(0.0, t > floorT ? 0.0 : dy));
   // Spin grows fast, then unwinds to zero as the snowman lands.
-  p.rot = static_cast<float>(spin * std::sin(u * pi) * (1.0 - u));
+  p.rot = static_cast<float>(spin * std::sin(u * pi) * std::pow(1.0 - u, 0.7));
   return p;
 }
 

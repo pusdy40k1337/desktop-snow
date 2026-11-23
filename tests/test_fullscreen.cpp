@@ -173,7 +173,7 @@ TEST(pause_snapped_or_borderless_window_filling_the_work_area) {
   CHECK(d.pause && d.reason == PauseReason::Maximized);
 }
 
-TEST(pause_almost_the_work_area_does_not_pause) {
+TEST(pause_almost_the_work_area_alone_does_not_pause) {
   FsWindow almost = Fw(RectI(0, 0, 1920, 1030));  // 10 px short of the work area
   PauseDecision d = Decide1({almost});
   CHECK(!d.pause);
@@ -181,12 +181,34 @@ TEST(pause_almost_the_work_area_does_not_pause) {
   CHECK(std::string(d.rule) == "top window does not cover");
   FsWindow narrow = Fw(RectI(6, 0, 1920, 1040));  // 6 px short at the left edge
   CHECK(!Decide1({narrow}).pause);
-  // And it hides a maximised window below it: the user works in the top one.
+  // A maximised window below a small one stays paused: the user is still
+  // working inside the maximised app (Spotify over a maximised Chrome).
   FsWindow below = Fw(kW1);
   below.zoomed = below.captioned = true;
-  CHECK(!Decide1({almost, below}).pause);
+  PauseDecision under = Decide1({almost, below});
+  CHECK(under.pause && under.reason == PauseReason::Maximized);
+  CHECK(under.window == 1);
+  CHECK(std::string(under.rule) == "maximized (zoomed)");
   CHECK(std::string(Decide1({}).rule) == "no window");
   CHECK(std::string(PauseReasonName(PauseReason::None)) == "none");
+}
+
+TEST(pause_small_window_over_maximised_keeps_pause) {
+  // The reported bug: Chrome maximised, Spotify opened on top -> snow started
+  // falling over everything. The maximised window keeps the monitor paused.
+  FsWindow browser = Fw(kW1);
+  browser.zoomed = browser.captioned = true;
+  FsWindow spotify = Fw(RectI(1200, 120, 1850, 700));
+  spotify.foreground = true;
+  PauseDecision d = Decide1({spotify, browser});
+  CHECK(d.pause);
+  CHECK(d.reason == PauseReason::Maximized);
+  CHECK(std::string(d.rule) == "maximized (zoomed)");
+  // Same with a borderless fullscreen window under the small one.
+  FsWindow video = Fw(kM1);
+  PauseDecision f = Decide1({spotify, video});
+  CHECK(f.pause && f.reason == PauseReason::Fullscreen);
+  CHECK(std::string(f.rule) == "covers the monitor (any z-order)");
 }
 
 TEST(pause_fullscreen_within_tolerance) {
@@ -194,7 +216,7 @@ TEST(pause_fullscreen_within_tolerance) {
   FsWindow fs = Fw(RectI(1, 0, 1920, 1078));
   PauseDecision d = Decide1({fs});
   CHECK(d.pause && d.reason == PauseReason::Fullscreen);
-  CHECK(std::string(d.rule) == "covers the monitor");
+  CHECK(std::string(d.rule) == "covers the monitor (any z-order)");
   CHECK(std::string(PauseReasonName(d.reason)) == "fullscreen");
   // Fullscreen pause off: no pause even though it is reported.
   PauseOptions off;
@@ -228,21 +250,25 @@ TEST(pause_fullscreen_holds_under_a_small_window) {
   PauseDecision d = Decide1({winrar, chrome});
   CHECK(d.pause && d.reason == PauseReason::Fullscreen);
   CHECK(d.window == 1);
-  CHECK(std::string(d.rule) == "covers the monitor (under the top window)");
+  CHECK(std::string(d.rule) == "covers the monitor (any z-order)");
   // The fullscreen pause switched off: reported, but no pause.
   PauseOptions off;
   off.fullscreen = false;
   d = Decide1({winrar, chrome}, off);
   CHECK(!d.pause && d.reason == PauseReason::Fullscreen);
-  // A merely maximised window under the small one is not enough: the user works
-  // in the window on top, the desktop is still visible around it.
+  // A maximised window under the small one keeps the monitor paused: the user
+  // is still working inside the maximised app (Spotify over a maximised Chrome).
   FsWindow maximised = Fw(kW1);
   maximised.zoomed = maximised.captioned = true;
-  CHECK(Decide1({winrar, maximised}).reason == PauseReason::None);
-  // A video player that stops a few pixels short of the monitor edge is not held
-  // either (borderless maximised windows look like that).
+  PauseDecision under = Decide1({winrar, maximised});
+  CHECK(under.pause && under.reason == PauseReason::Maximized);
+  CHECK(std::string(under.rule) == "maximized (zoomed)");
+  // A borderless window that fills the work area and stops short of the monitor
+  // edge is a maximised-style window too: it keeps the pause.
   FsWindow shortBy10 = Fw(RectI(0, 0, 1920, 1070));
-  CHECK(Decide1({winrar, shortBy10}).reason == PauseReason::None);
+  PauseDecision shortD = Decide1({winrar, shortBy10});
+  CHECK(shortD.pause && shortD.reason == PauseReason::Maximized);
+  CHECK(std::string(shortD.rule) == "covers the work area");
 }
 
 TEST(pause_second_monitor_with_other_dpi) {

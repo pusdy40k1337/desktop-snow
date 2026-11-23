@@ -305,3 +305,40 @@ TEST(actors_santa_and_yeti_lifecycle) {
   CHECK(!a.yeti().active);
   CHECK(!a.trigger(ActorKind::Yeti, t, mons, {}));  // nobody to hunt
 }
+
+TEST(world_cursor_breeze_pushes_falling_flakes) {
+  World w;
+  SimSettings set = Quiet();
+  set.snowing = true;
+  set.intensity = 1.f;
+  w.configure(set);
+  w.setMonitors(OneMonitor());
+  std::vector<WindowInput> none;
+  for (int i = 0; i < 120; ++i) w.update(i / 60.0, 1 / 60.f, none);
+  w.setCursor(Vec2(300.f, 300.f), true);
+  w.setCursor(Vec2(1500.f, 300.f), true);  // a fast stroke across the screen
+  w.update(2.1, 1 / 60.f, none);
+  int pushed = 0;
+  for (const auto& p : w.particles())
+    if (p.kind == ParticleKind::Flake && std::fabs(p.vx) > 60.f) ++pushed;
+  CHECK(pushed > 0);
+}
+
+TEST(world_sweep_keeps_debris_per_frame_bounded) {
+  World w;
+  SimSettings set = Quiet();
+  set.initialDusting = 0.9f;
+  set.cursorSweep = true;
+  w.configure(set);
+  w.setMonitors(OneMonitor());
+  std::vector<WindowInput> wins = {Win(1, RectI(400, 500, 1400, 900), 0)};
+  w.update(0.016, 1 / 60.f, wins);
+  int prev = w.stats().debris;
+  for (int f = 0; f < 24; ++f) {
+    w.setCursor(Vec2(450.f + f * 35.f, 495.f), true);
+    w.update(0.033 + f / 60.0, 1 / 60.f, wins);
+    const int nowDebris = w.stats().debris;
+    CHECK_MSG(nowDebris - prev <= 60, "sweeping spawns a bounded burst per frame");
+    prev = nowDebris;
+  }
+}

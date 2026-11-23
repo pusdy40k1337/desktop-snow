@@ -22,6 +22,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdio>
+#include <cwchar>
 #include <deque>
 #include <mutex>
 #include <thread>
@@ -201,24 +202,43 @@ struct Engine::Impl {
   struct KnockRun {
     double t0 = 0;
     int dir = 1;
+    uint32_t seed = 0;  // per-snowman variation, keeps the row from moving in lockstep
   };
   std::unordered_map<uint32_t, KnockRun> knockedAt;
   std::vector<HWND> destroyedTmp;
 
-  // Snowball being rolled with the mouse (only while LMB is held on a drift).
+  // Snowballs: a ball rolled out of a drift stays on the edge after the mouse
+  // is released, can be picked up again and stacked into a snowman.
   struct Ball {
-    bool active = false;   // being rolled right now
-    bool fading = false;   // released: shrinking away
+    uint32_t id = 0;
     uint64_t surface = 0;
-    Vec2 pos{};
+    float localX = 0;   // px from the surface's left end (follows the window)
     float mass = 0, radius0 = 6, radius = 6, spin = 0;
-    float localPrev = 0;
-    double fadeStart = 0;
+    bool held = false;
+    uint32_t atopOf = 0;  // ball id this one rests on (0 = on the edge)
+    int stack = 0;        // how many balls rest on this one
+    double hitT0 = -1;    // train knock start time, < 0 = not hit
+    int hitDir = 1;
   };
-  Ball ball;
+  std::vector<Ball> balls;
+  uint32_t nextBallId = 1;
+  std::vector<SnowballSnowmanSpawn> spawns;
+  Ball* FindBall(uint32_t id);
+  Ball* BallUnder(POINT pt);
+  Vec2 BallPos(const Ball& b) const;
+  void KnockBalls(double now, const TrainHitBox& hb);
   HHOOK mouseHook = nullptr;
   static Impl* hookOwner;
   double ballLastNow = 0;
+
+  // Popup menus (Win32 class "#32768") are drawn by the shell above every
+  // topmost overlay; painting the taskbar drift over an open tray/context menu
+  // hides its items (the user could not click "Exit"), so the taskbar pile is
+  // skipped while a menu overlaps it.
+  std::vector<RectI> menuRects;
+  double menuScanAt = -1e9;
+  void ScanPopupMenus(double now);
+  bool PopupMenuCovers(const RectI& r) const;
 
   HANDLE timer = nullptr;
   bool hiResTimer = false;
@@ -365,6 +385,12 @@ void Engine::TakeSnowmanUpdates(std::vector<SnowmanUpdate>& out) {
   std::lock_guard<std::mutex> lock(impl_->mu);
   out.swap(impl_->updates);
   impl_->updates.clear();
+}
+
+void Engine::TakeSnowballSpawns(std::vector<SnowballSnowmanSpawn>& out) {
+  std::lock_guard<std::mutex> lock(impl_->mu);
+  out.swap(impl_->spawns);
+  impl_->spawns.clear();
 }
 
 std::vector<HWND> Engine::OverlayWindows() {
@@ -1235,7 +1261,6 @@ void Engine::Impl::UpdateDecor(double now) {
     dr.sm = &sm;
     RectI edge;
     float scale = 1;
-    float snowDepth = 0;
     if (target) {
       edge = target->rect;
       scale = target->scale;
@@ -1262,8 +1287,11 @@ void Engine::Impl::UpdateDecor(double now) {
     float half = 0.3f * h;
     float x = static_cast<float>(edge.left) + rel * edge.width();
     x = clampf(x, edge.left + half, std::max(edge.left + half, edge.right - half));
-    if (const Surface* s = world.surface(dr.surfaceId)) snowDepth = std::min(s->pile.heightAt(x - edge.left), 0.25f * h) * 0.6f;
-    dr.base = Vec2(x, static_cast<float>(edge.top) - snowDepth - lift);
+    // The base sits on the window/taskbar edge with a fixed 2.5 px bite into the
+    // snow, independent of how deep the drift has grown: a growing pile must not
+    // lift the snowman off its sill and leave it floating.
+    const float embed = 2.5f * scale;
+    dr.base = Vec2(x, static_cast<float>(edge.top) + embed - lift);
     dr.height = h;
     dr.build = rt.buildStart > 0 ? clampf(static_cast<float>((now - rt.buildStart) / 2.0), 0.f, 1.f) : 1.f;
     if (const Surface* s = world.surface(dr.surfaceId)) dr.wobble = s->wobble;
@@ -1637,13 +1665,26 @@ bool Engine::Impl::DrawDecorateUi(const Overlay& ov) {
   IDWriteTextFormat* hf = Format(fmtHint, L"Segoe UI", 13.f, ov.scale, false);
   if (hf) {
     const RectI hint = HintRect(ov.work, pal.bar, ov.scale);
-    D2D1_RECT_F box = D2D1::RectF(static_cast<float>(hint.left), static_cast<float>(hint.top),
-                                  static_cast<float>(hint.right), static_cast<float>(hint.bottom));
+    const float padX = 12.f * ov.scale, padY = 5.f * ov.scale;
+    const float maxW = static_cast<float>(hint.width()) - 2.f * padX;
+    ComPtr<IDWriteTextLayout> layout;
+    DWRITE_TEXT_METRICS tm{};
+    float boxH = static_cast<float>(hint.height());
+    if (dwrite && SUCCEEDED(dwrite->CreateTextLayout(hintText.c_str(), static_cast<UINT32>(hintText.size()), hf,
+                                                     maxW, 1024.f * ov.scale, layout.GetAddressOf())) &&
+        layout && SUCCEEDED(layout->GetMetrics(&tm)))
+      boxH = std::max(boxH, tm.height + 2.f * padY);  // the plate grows with the wrapped text
+    float top = static_cast<float>(hint.top);
+    if (top + boxH > static_cast<float>(ov.work.bottom))
+      top = std::max(static_cast<float>(ov.work.top), static_cast<float>(ov.work.bottom) - boxH);
+    const D2D1_RECT_F box = D2D1::RectF(static_cast<float>(hint.left), top, static_cast<float>(hint.right), top + boxH);
     dc->FillRoundedRectangle(D2D1::RoundedRect(box, 8 * ov.scale, 8 * ov.scale), brush(D2D1::ColorF(0, 0, 0, 0.6f)));
-    box.left += 12 * ov.scale;
-    box.right -= 12 * ov.scale;
-    box.top += 5 * ov.scale;
-    dc->DrawText(hintText.c_str(), static_cast<UINT32>(hintText.size()), hf, box, brush(D2D1::ColorF(1, 1, 1, 0.95f)));
+    if (layout)
+      dc->DrawTextLayout(D2D1::Point2F(box.left + padX, top + padY), layout.Get(),
+                         brush(D2D1::ColorF(1, 1, 1, 0.95f)));
+    else
+      dc->DrawText(hintText.c_str(), static_cast<UINT32>(hintText.size()), hf,
+                   D2D1::RectF(box.left + padX, top + padY, box.right - padX, box.bottom), brush(D2D1::ColorF(1, 1, 1, 0.95f)));
   }
   return true;
 }
@@ -1727,8 +1768,9 @@ bool Engine::Impl::RenderOverlay(Overlay& ov, const FrameTiming& ft) {
       for (const auto& dr : snowmenDraw) {
         if (knockedAt.find(dr.sm->id) != knockedAt.end()) continue;
         if (!TrainHitsSnowman(hb, dr.base.x, dr.base.y)) continue;
-        knockedAt[dr.sm->id] = KnockRun{now, tr.dir};
+        knockedAt[dr.sm->id] = KnockRun{now, tr.dir, dr.sm->id};
       }
+      KnockBalls(now, hb);  // snowballs on the rails fly too
     }
     auto drawSnowmenOn = [&](uint64_t surfaceId) {
       for (const auto& dr : snowmenDraw) {
@@ -1736,7 +1778,7 @@ bool Engine::Impl::RenderOverlay(Overlay& ov, const FrameTiming& ft) {
         float kx = 0, ky = 0, krot = 0;
         auto kit = knockedAt.find(dr.sm->id);
         if (kit != knockedAt.end()) {
-          const KnockPose kp = KnockAt(now - kit->second.t0, kit->second.dir);
+          const KnockPose kp = KnockAt(now - kit->second.t0, kit->second.dir, kit->second.seed);
           // The marker stays until the train leaves, otherwise the next
           // overlay/frame would start the tumble again and again.
           if (!kp.done) {
@@ -1766,6 +1808,7 @@ bool Engine::Impl::RenderOverlay(Overlay& ov, const FrameTiming& ft) {
     // fields), only shows where the desktop is behind it.
     for (const WindowInput& w : inputs) {
       if (!w.isTaskbar) continue;
+      if (PopupMenuCovers(w.rect)) continue;  // an open tray/context menu owns this area
       if (const Surface* s = world.surface(w.id)) {
         if (s->active && DrawPile(*s, ov, base)) content = true;
       }
@@ -1827,11 +1870,16 @@ bool Engine::Impl::RenderOverlay(Overlay& ov, const FrameTiming& ft) {
       }
       content = true;
     }
-    if ((ball.active || ball.fading) && ov.rect.containsF(ball.pos.x, ball.pos.y)) {
-      float r = ball.radius;
-      if (ball.fading) r *= std::max(0.f, 1.f - static_cast<float>((ballLastNow - ball.fadeStart) / 0.35));
-      if (r > 0.5f) {
-        decorR.DrawSnowball(f, D2D1::Point2F(ball.pos.x, ball.pos.y), r, ball.spin);
+    for (const auto& b : balls) {
+      float kx = 0.f, ky = 0.f;
+      if (b.hitT0 >= 0) {
+        const KnockPose kp = KnockAt(ft.target - b.hitT0, b.hitDir, b.id);
+        if (!kp.done) { kx = kp.dx; ky = kp.dy; }
+      }
+      const Vec2 p = BallPos(b);
+      if (!ov.rect.containsF(p.x + kx, p.y + ky)) continue;
+      if (b.radius > 0.5f) {
+        decorR.DrawSnowball(f, D2D1::Point2F(p.x + kx, p.y + ky), b.radius, b.spin);
         content = true;
       }
     }
@@ -1873,6 +1921,37 @@ LRESULT CALLBACK Engine::Impl::MouseHookProc(int code, WPARAM w, LPARAM l) {
   return CallNextHookEx(nullptr, code, w, l);
 }
 
+// ---------------------------------------------------------------- popup menus
+
+void Engine::Impl::ScanPopupMenus(double now) {
+  if (now - menuScanAt < 0.12) return;  // cheap: a few times per second at most
+  menuScanAt = now;
+  menuRects.clear();
+  struct Ctx {
+    std::vector<RectI>* out;
+  } ctx{&menuRects};
+  EnumWindows(
+      [](HWND h, LPARAM lp) -> BOOL {
+        auto* c = reinterpret_cast<Ctx*>(lp);
+        if (!IsWindowVisible(h)) return TRUE;
+        wchar_t cls[32] = L"";
+        if (!GetClassNameW(h, cls, 32)) return TRUE;
+        if (std::wcscmp(cls, L"#32768") != 0) return TRUE;  // MENU class
+        RECT r;
+        if (!GetWindowRect(h, &r)) return TRUE;
+        c->out->push_back(RectI(r.left, r.top, r.right, r.bottom));
+        return TRUE;
+      },
+      reinterpret_cast<LPARAM>(&ctx));
+}
+
+bool Engine::Impl::PopupMenuCovers(const RectI& r) const {
+  for (const RectI& m : menuRects) {
+    if (m.intersects(r)) return true;
+  }
+  return false;
+}
+
 bool Engine::Impl::SnowballSurfaceAt(POINT pt, const Surface*& out, float& localX) const {
   out = nullptr;
   localX = 0.f;
@@ -1890,34 +1969,117 @@ bool Engine::Impl::SnowballSurfaceAt(POINT pt, const Surface*& out, float& local
   return out != nullptr;
 }
 
+Engine::Impl::Ball* Engine::Impl::FindBall(uint32_t id) {
+  for (auto& b : balls)
+    if (b.id == id) return &b;
+  return nullptr;
+}
+
+Vec2 Engine::Impl::BallPos(const Ball& b) const {
+  const Surface* s = world.surface(b.surface);
+  if (!s) return Vec2();
+  const float lx = std::clamp(b.localX, 0.f, s->pile.width());
+  if (b.atopOf) {
+    if (const Ball* p = const_cast<Impl*>(this)->FindBall(b.atopOf)) {
+      const Vec2 pp = BallPos(*p);
+      return Vec2(pp.x, pp.y - p->radius * 0.92f - b.radius * 0.92f);
+    }
+  }
+  float y = static_cast<float>(s->rect.top) - b.radius * 0.55f;  // rests on the sill
+  if (b.held) y = static_cast<float>(s->rect.top) - s->pile.heightAt(lx) - b.radius * 0.35f;
+  return Vec2(static_cast<float>(s->rect.left) + lx, y);
+}
+
+Engine::Impl::Ball* Engine::Impl::BallUnder(POINT pt) {
+  for (auto it = balls.rbegin(); it != balls.rend(); ++it) {
+    if (it->held) continue;
+    const Vec2 p = BallPos(*it);
+    const float dx = static_cast<float>(pt.x) - p.x, dy = static_cast<float>(pt.y) - p.y;
+    const float r = it->radius + 6.f;
+    if (dx * dx + dy * dy <= r * r) return &(*it);
+  }
+  return nullptr;
+}
+
 bool Engine::Impl::OnSnowballMouse(UINT msg, POINT pt) {
   if (c.decorateMode || c.paused || !c.settings.extras.snowballs) {
-    ball.active = false;
-    ball.fading = false;
+    for (auto& b : balls) b.held = false;
     return false;
   }
   if (msg == WM_LBUTTONDOWN) {
+    // Pick a resting ball up again before grabbing fresh snow.
+    if (Ball* picked = BallUnder(pt)) {
+      if (picked->atopOf) {
+        if (Ball* p = FindBall(picked->atopOf)) p->stack = std::max(0, p->stack - 1);
+      }
+      picked->atopOf = 0;
+      picked->held = true;
+      return true;
+    }
     const Surface* s = nullptr;
     float lx = 0.f;
-    if (!SnowballSurfaceAt(pt, s, lx)) return false;  // empty desk / snowy caption: let the click through
-    ball = Ball();
-    ball.active = true;
-    ball.surface = s->id;
-    ball.radius0 = std::max(4.f, 5.f * s->scale);
-    ball.radius = ball.radius0;
-    ball.localPrev = lx;
-    ball.pos = Vec2(static_cast<float>(pt.x), static_cast<float>(s->rect.top) - s->pile.heightAt(lx));
-    // The first handful right under the cursor.
-    ball.mass += world.carvePile(s->id, std::clamp(lx - ball.radius0, 0.f, s->pile.width()),
-                                 std::clamp(lx + ball.radius0, 0.f, s->pile.width()));
-    ball.radius = SnowballRadius(ball.mass, ball.radius0);
+    if (!SnowballSurfaceAt(pt, s, lx)) return false;
+    Ball b;
+    b.id = nextBallId++;
+    b.surface = s->id;
+    b.radius0 = std::max(4.f, 5.f * s->scale);
+    b.radius = b.radius0;
+    b.localX = lx;
+    b.held = true;
+    b.mass = world.carvePile(s->id, std::clamp(lx - b.radius0, 0.f, s->pile.width()),
+                             std::clamp(lx + b.radius0, 0.f, s->pile.width()));
+    b.radius = SnowballRadius(b.mass, b.radius0);
+    balls.push_back(b);
+    // Keep the desk tidy: drop the oldest resting ball once there are too many.
+    while (balls.size() > 32) {
+      auto it = std::find_if(balls.begin(), balls.end(), [](const Ball& x) { return !x.held; });
+      if (it == balls.end()) break;
+      balls.erase(it);
+    }
     return true;
   }
   if (msg == WM_LBUTTONUP) {
-    if (!ball.active) return false;
-    ball.active = false;
-    ball.fading = true;
-    ball.fadeStart = ballLastNow;
+    Ball* held = nullptr;
+    for (auto& b : balls)
+      if (b.held) { held = &b; break; }
+    if (!held) return false;
+    held->held = false;
+    // Put it down on top of another ball when it lands there: three balls make
+    // a snowman.
+    Ball* host = nullptr;
+    for (auto& b : balls) {
+      if (&b == held || b.held || b.surface != held->surface || b.atopOf || b.stack >= 2) continue;
+      if (b.radius < held->radius * 0.75f) continue;
+      if (std::fabs(b.localX - held->localX) <= (b.radius + held->radius) * 0.55f) { host = &b; break; }
+    }
+    if (host) {
+      held->atopOf = host->id;
+      held->localX = host->localX;
+      ++host->stack;
+      if (host->stack >= 2) {
+        if (const Surface* s = world.surface(host->surface)) {
+          SnowballSnowmanSpawn sp;
+          sp.surface = host->surface;
+          sp.relX = s->pile.width() > 1.f ? std::clamp(host->localX / s->pile.width(), 0.f, 1.f) : 0.5f;
+          sp.scale = s->scale;
+          sp.taskbar = s->isTaskbar;
+          {
+            std::lock_guard<std::mutex> lock(mu);
+            spawns.push_back(sp);
+          }
+          if (notify) PostMessageW(notify, WM_APP_DECOR_UPDATE, 0, 0);
+          const uint32_t base = host->id;
+          uint32_t mid = 0, top = 0;
+          for (const auto& b : balls) {
+            if (b.atopOf == base) { if (mid == 0) mid = b.id; else top = b.id; }
+          }
+          balls.erase(std::remove_if(balls.begin(), balls.end(), [&](const Ball& b) {
+                        return b.id == base || b.id == mid || b.id == top;
+                      }),
+                      balls.end());
+        }
+      }
+    }
     return true;
   }
   return false;
@@ -1925,41 +2087,49 @@ bool Engine::Impl::OnSnowballMouse(UINT msg, POINT pt) {
 
 void Engine::Impl::UpdateSnowball(double now, float dt) {
   ballLastNow = now;
-  if (ball.fading) {
-    if (now - ball.fadeStart > 0.35) ball.fading = false;
-    return;
-  }
-  if (!ball.active) return;
-  if (c.decorateMode || c.paused || !c.settings.extras.snowballs) {
-    ball.active = false;
-    return;
-  }
-  const Surface* s = world.surface(ball.surface);
-  if (!s || s->pile.empty()) {
-    if (!s) ball.active = false;
-  }
-  POINT pt{};
-  if (!GetCursorPos(&pt)) return;
-  if (!s) return;
-  const float lx = std::clamp(static_cast<float>(pt.x) - static_cast<float>(s->rect.left), 0.f, s->pile.width());
-  // Carve every column the ball rolls over (interpolated so fast strokes miss nothing).
-  const float from = ball.localPrev;
-  const float step = std::max(3.f, ball.radius0);
-  const int n = std::max(1, static_cast<int>(std::fabs(lx - from) / step) + 1);
-  float collected = 0.f;
-  for (int i = 1; i <= n; ++i) {
-    const float mid = from + (lx - from) * static_cast<float>(i) / static_cast<float>(n);
-    const float a = std::clamp(mid - ball.radius0, 0.f, s->pile.width());
-    const float b = std::clamp(mid + ball.radius0, 0.f, s->pile.width());
-    collected += world.carvePile(ball.surface, a, b);
-  }
-  ball.mass += collected;
-  ball.radius = SnowballRadius(ball.mass, ball.radius0);
-  ball.spin += (lx - from) / std::max(4.f, ball.radius);
-  ball.localPrev = lx;
-  // Rolls on top of what is left of the drift; with no snow it just rides the edge.
-  ball.pos = Vec2(static_cast<float>(pt.x), static_cast<float>(s->rect.top) - s->pile.heightAt(lx) - ball.radius * 0.35f);
   (void)dt;
+  if (c.decorateMode || c.paused || !c.settings.extras.snowballs) {
+    for (auto& b : balls) b.held = false;
+    return;
+  }
+  for (auto& b : balls) {
+    if (b.hitT0 >= 0 && now - b.hitT0 > kKnockDuration) b.hitT0 = -1;
+    if (!b.held) continue;
+    const Surface* s = world.surface(b.surface);
+    if (!s) { b.held = false; continue; }
+    POINT pt{};
+    if (!GetCursorPos(&pt)) return;
+    const float lx = std::clamp(static_cast<float>(pt.x) - static_cast<float>(s->rect.left), 0.f,
+                                std::max(0.f, s->pile.width()));
+    // Carve every column the ball rolls over (interpolated so fast strokes miss
+    // nothing); a bigger ball scoops a wider strip, so it grows quickly.
+    const float from = b.localX;
+    const float half = std::max(b.radius, b.radius0);
+    const float step = std::max(3.f, b.radius0);
+    const int n = std::max(1, static_cast<int>(std::fabs(lx - from) / step) + 1);
+    float collected = 0.f;
+    for (int i = 1; i <= n; ++i) {
+      const float mid = from + (lx - from) * static_cast<float>(i) / static_cast<float>(n);
+      const float a = std::clamp(mid - half, 0.f, s->pile.width());
+      const float e = std::clamp(mid + half, 0.f, s->pile.width());
+      collected += world.carvePile(b.surface, a, e);
+    }
+    b.mass += collected;
+    b.radius = SnowballRadius(b.mass, b.radius0);
+    b.spin += (lx - from) / std::max(4.f, b.radius);
+    b.localX = lx;
+  }
+}
+
+void Engine::Impl::KnockBalls(double now, const TrainHitBox& hb) {
+  for (auto& b : balls) {
+    if (b.hitT0 >= 0 || b.held) continue;
+    const Surface* s = world.surface(b.surface);
+    if (!s || !s->isTaskbar) continue;  // the train runs along the taskbar edge
+    if (!TrainHitsSnowman(hb, static_cast<float>(s->rect.left) + b.localX, static_cast<float>(s->rect.top))) continue;
+    b.hitT0 = now;
+    b.hitDir = hb.dir;
+  }
 }
 
 bool Engine::Impl::Frame(const FrameTiming& ft) {
@@ -1982,6 +2152,7 @@ bool Engine::Impl::Frame(const FrameTiming& ft) {
   world.update(ft.target, static_cast<float>(clampd(dt, 0.0, 0.1)), inputs);
   UpdateSnowball(ft.target, static_cast<float>(clampd(dt, 0.0, 0.1)));
   UpdateDecor(ft.target);
+  ScanPopupMenus(ft.target);
   prevSimTime = ft.target;
 
   bool presented = false;

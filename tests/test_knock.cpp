@@ -50,8 +50,7 @@ TEST(knock_pose_throws_up_spins_and_returns_to_the_spot) {
   CHECK(KnockAt(0.0, 1).dx == 0.f);
 }
 
-TEST(knock_works_for_placed_and_built_snowmen_alike) {
-  // "Built" snowmen (rolled from snowballs / placed for free) stand on the same
+TEST(knock_works_for_placed_and_built_snowmen_alike) {  // "Built" snowmen (rolled from snowballs / placed for free) stand on the same
   // rails as window snowmen, so the same hit box covers both: position is the
   // only input.
   TrainHitBox box{1200, 500, 1, 1050};
@@ -62,4 +61,20 @@ TEST(knock_works_for_placed_and_built_snowmen_alike) {
   KnockPose a = KnockAt(0.2, 1);
   KnockPose b = KnockAt(0.2, 1);
   CHECK(a.dx == b.dx && a.dy == b.dy && a.rot == b.rot);
+}
+
+TEST(knock_throw_is_strong_and_varies_per_snowman) {
+  double maxDx = 0, minDy = 0, maxRot = 0;
+  for (int i = 0; i <= 100; ++i) {
+    const double t = kKnockDuration * i / 100.0;
+    const KnockPose p = KnockAt(t, 1, 7);
+    maxDx = std::max(maxDx, static_cast<double>(p.dx));
+    minDy = std::min(minDy, static_cast<double>(p.dy));
+    maxRot = std::max(maxRot, std::fabs(static_cast<double>(p.rot)));
+  }
+  CHECK(maxDx >= 120.0);  // a real throw, not a nudge
+  CHECK(minDy <= -60.0);  // and a real jump
+  CHECK(maxRot >= 2.0);   // with a visible spin
+  // Neighbouring snowmen do not move in lockstep.
+  CHECK(KnockAt(0.2, 1, 3).dx != KnockAt(0.2, 1, 9).dx);
 }

@@ -401,9 +401,34 @@ void World::updateCursor(float dt) {
   }
   Vec2 v = (cursor_ - cursorPrev_) * (1.f / dt);
   cursorVel_ = v;
-  if (!s_.cursorSweep || s_.reducedMotion) return;
-  float speed = v.length();
+  if (s_.reducedMotion) return;
+  const float speed = v.length();
+
+  // A fast cursor is a soft breeze for the falling flakes: they drift away from
+  // the pointer instead of passing straight through it.
+  if (speed > 180.f && !particles_.empty()) {
+    const float R = 170.f;
+    const float R2 = R * R;
+    const float strength = std::min(1.f, (speed - 180.f) / 1400.f);
+    for (auto& p : particles_) {
+      if (p.kind != ParticleKind::Flake) continue;
+      const float dx = p.x - cursor_.x, dy = p.y - cursor_.y;
+      const float d2 = dx * dx + dy * dy;
+      if (d2 > R2 || d2 < 1e-3f) continue;
+      const float falloff = 1.f - std::sqrt(d2) / R;
+      const float f = falloff * falloff * strength;
+      // Push along the stroke plus a little sideways swirl.
+      p.breezeX += (v.x * 0.22f + dx * 1.6f - dy * 0.5f) * f * dt;
+      p.breezeY += (v.y * 0.10f + dy * 1.6f + dx * 0.5f) * f * dt;
+    }
+  }
+
+  if (!s_.cursorSweep) return;
+  // Sweeping a thick drift must stay smooth: cap the debris spawned per frame
+  // instead of turning the whole carved slab into particles at once.
+  int budget = 24;
   for (Surface* s : active_) {
+    if (budget <= 0) break;
     float scale = s->scale;
     if (speed < 280.f * scale) continue;
     float lx = cursor_.x - static_cast<float>(s->rect.left);
@@ -417,7 +442,8 @@ void World::updateCursor(float dt) {
     float r = 18.f * scale;
     debrisTmp_.clear();
     float frac = clampf(speed / 1500.f, 0.15f, 0.8f);
-    s->pile.removeRange(lx - r, lx + r, frac, 2.2f * scale * scale, 30, debrisTmp_);
+    s->pile.removeRange(lx - r, lx + r, frac, 2.2f * scale * scale, std::min(12, budget), debrisTmp_);
+    budget -= static_cast<int>(debrisTmp_.size());
     spawnDebris(*s, debrisTmp_, v * 0.35f + Vec2(0, -80.f * scale), 60.f * scale);
   }
 }
@@ -500,8 +526,12 @@ void World::updateParticles(float dt) {
     float vy = s_.fallSpeed * L.speed * (0.75f + 0.5f * p.r2) * scale * speedMul;
     if (p.kind == ParticleKind::Confetti) vy *= 0.8f;
     float vx = windNow_ * L.wind * scale + std::sin(t * p.sway + p.phase) * swayAmp;
-    p.vx = vx;
-    p.vy = vy;
+    // A cursor draught is a persistent offset on top of the wind, fading out.
+    const float breezeDecay = std::exp(-2.2f * dt);
+    p.breezeX *= breezeDecay;
+    p.breezeY *= breezeDecay;
+    p.vx = vx + p.breezeX;
+    p.vy = vy + p.breezeY;
     p.size = lerpf(s_.flakeMin, s_.flakeMax, p.r1) * L.size * scale;
     p.prevY = p.y;
     p.x += vx * dt;
