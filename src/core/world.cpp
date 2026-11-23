@@ -417,9 +417,12 @@ void World::updateCursor(float dt) {
       if (d2 > R2 || d2 < 1e-3f) continue;
       const float falloff = 1.f - std::sqrt(d2) / R;
       const float f = falloff * falloff * strength;
-      // Push along the stroke plus a radial swirl away from the pointer.
-      p.breezeX += (v.x * 0.55f + dx * 3.2f - dy * 0.8f) * f * dt;
-      p.breezeY += (v.y * 0.30f + dy * 3.2f + dx * 0.8f) * f * dt;
+      // A velocity kick per frame while the pointer is moving: strong enough to
+      // see the flakes part around the mouse, decaying within ~0.5 s.
+      const float bx = (v.x * 0.35f + dx * 2.2f - dy * 0.6f) * f;
+      const float by = (v.y * 0.35f + dy * 2.2f + dx * 0.6f) * f;
+      p.breezeX = clampf(p.breezeX + bx, -900.f, 900.f);
+      p.breezeY = clampf(p.breezeY + by, -700.f, 700.f);
     }
   }
   if (s_.reducedMotion) return;

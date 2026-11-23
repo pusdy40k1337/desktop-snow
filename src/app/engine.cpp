@@ -27,6 +27,7 @@
 #include <mutex>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "../core/actors.h"
 #include "../core/motion.h"
@@ -181,6 +182,11 @@ struct Engine::Impl {
   ActorSystem actors;
   std::unordered_map<HWND, MotionTracker> motion;
   std::unordered_map<uint64_t, PileGeom> pileGeoms;
+  // Displayed heights: eased copy of each pile's target heightmap so a mouse
+  // stroke is smoothed, never a per-event jump.
+  std::unordered_map<uint64_t, std::vector<float>> visualH;
+  std::unordered_set<uint64_t> visualDirty;
+  void UpdateVisualHeights(float dt);
   std::unordered_map<uint32_t, SnowmanRt> smRt;
   std::unordered_map<uint32_t, double> treeGrow;
   // Optional PNG overrides from <exe dir>\assets (see assets/README.md).
@@ -1375,8 +1381,14 @@ void Engine::Impl::BuildPileGeom(const Surface& s, PileGeom& g) {
   g.version = s.pile.version();
   g.width = s.pile.width();
   g.radius = s.cornerRadius;
-  g.peak = s.pile.peak();
-  const auto& h = s.pile.heights();
+  const auto& target = s.pile.heights();
+  const std::vector<float>* vis = nullptr;
+  auto vit = visualH.find(s.id);
+  if (vit != visualH.end() && vit->second.size() == target.size()) vis = &vit->second;
+  const std::vector<float>& h = vis ? *vis : target;
+  float peak = 0.f;
+  for (float v : h) peak = std::max(peak, v);
+  g.peak = peak;
   int n = static_cast<int>(h.size());
   if (n == 0) return;
   float W = s.pile.width(), r = s.cornerRadius, step = s.pile.step();
@@ -1425,6 +1437,21 @@ void Engine::Impl::BuildPileGeom(const Surface& s, PileGeom& g) {
   }
 }
 
+void Engine::Impl::UpdateVisualHeights(float dt) {
+  const float k = std::min(1.f, dt * 22.f);
+  std::unordered_set<uint64_t> alive;
+  for (const WindowInput& w : inputs) {
+    const Surface* s = world.surface(w.id);
+    if (!s || s->pile.heights().empty()) continue;
+    alive.insert(s->id);
+    if (snow::SmoothHeights(visualH[s->id], s->pile.heights(), k)) visualDirty.insert(s->id);
+  }
+  for (auto it = visualH.begin(); it != visualH.end();) {
+    if (alive.find(it->first) == alive.end()) it = visualH.erase(it);
+    else ++it;
+  }
+}
+
 bool Engine::Impl::DrawPile(const Surface& s, const Overlay& ov, const D2D1_MATRIX_3X2_F& base) {
   if (s.pile.empty()) return false;
   float peak = s.pile.peak();
@@ -1434,12 +1461,15 @@ bool Engine::Impl::DrawPile(const Surface& s, const Overlay& ov, const D2D1_MATR
   PileGeom& g = pileGeoms[s.id];
   // Slow growth changes the shape a little every frame; rebuilding the path at
   // 20 Hz is visually identical. Big changes (scatter, resize) rebuild at once.
-  bool shapeChanged = g.version != s.pile.version();
-  bool big = g.width != s.pile.width() || g.radius != s.cornerRadius || std::fabs(peak - g.peak) > 1.5f * s.scale;
-  double now = Now();
-  if (shapeChanged && (big || now - g.builtAt >= 0.05)) {
+  // While the displayed shape eases towards the target the geometry is rebuilt
+  // every frame (a 20 Hz timer made the sweep look like discrete steps); plain
+  // snowfall growth still rebuilds at 20 Hz to save CPU.
+  const bool visualMoved = visualDirty.find(s.id) != visualDirty.end();
+  const bool versionChanged = g.version != s.pile.version();
+  if (visualMoved || (versionChanged && Now() - g.builtAt >= 0.05)) {
     BuildPileGeom(s, g);
-    g.builtAt = now;
+    g.builtAt = Now();
+    visualDirty.erase(s.id);
   }
   if (!g.fill) return false;
   const Theme& th = CurTheme();
@@ -1843,11 +1873,42 @@ bool Engine::Impl::RenderOverlay(Overlay& ov, const FrameTiming& ft) {
     // fields), only shows where the desktop is behind it.
     for (const WindowInput& w : inputs) {
       if (!w.isTaskbar) continue;
-      if (PopupMenuCovers(w.rect)) continue;  // an open tray/context menu owns this area
-      if (const Surface* s = world.surface(w.id)) {
-        if (s->active && DrawPile(*s, ov, base)) content = true;
+      auto drawTaskbar = [&]() {
+        if (const Surface* s = world.surface(w.id)) {
+          if (s->active && DrawPile(*s, ov, base)) content = true;
+        }
+        drawSnowmenOn(w.id);
+      };
+      std::vector<RectI> holes;
+      for (const RectI& m : menuRects) {
+        RectI x = m.intersect(ov.rect);
+        if (x.width() > 0 && x.height() > 0) holes.push_back(x);
       }
-      drawSnowmenOn(w.id);
+      if (holes.empty()) {
+        drawTaskbar();
+        continue;
+      }
+      // An open tray/context menu must not wipe the whole taskbar drift: only
+      // the menu's own rectangle is clipped out, the snow stays everywhere else.
+      dc->SetTransform(D2D1::Matrix3x2F::Identity());
+      for (const RectI& m : holes) {
+        const RectI bands[4] = {RectI(ov.rect.left, ov.rect.top, ov.rect.right, m.top),
+                                RectI(ov.rect.left, m.bottom, ov.rect.right, ov.rect.bottom),
+                                RectI(ov.rect.left, m.top, m.left, m.bottom),
+                                RectI(m.right, m.top, ov.rect.right, m.bottom)};
+        for (const RectI& band : bands) {
+          const RectI b = band.intersect(ov.rect);
+          if (b.width() <= 0 || b.height() <= 0) continue;
+          dc->PushAxisAlignedClip(D2D1::RectF(static_cast<float>(b.left), static_cast<float>(b.top),
+                                              static_cast<float>(b.right), static_cast<float>(b.bottom)),
+                                  D2D1_ANTIALIAS_MODE_ALIASED);
+          dc->SetTransform(base);
+          drawTaskbar();
+          dc->SetTransform(D2D1::Matrix3x2F::Identity());
+          dc->PopAxisAlignedClip();
+        }
+      }
+      dc->SetTransform(base);
     }
     // Windows from the bottom of the z-order up: each window hides what is
     // beneath it (that is how piles get clipped by windows in front).
@@ -2185,7 +2246,9 @@ bool Engine::Impl::Frame(const FrameTiming& ft) {
   bool cursorOk = GetCursorPos(&cp) != FALSE;
   world.setCursor(cursorOk ? Vec2(static_cast<float>(cp.x), static_cast<float>(cp.y)) : Vec2(), cursorOk);
   double dt = prevSimTime > 0 ? ft.target - prevSimTime : 1.0 / 60;
-  world.update(ft.target, static_cast<float>(clampd(dt, 0.0, 0.1)), inputs);
+  const float simDt = static_cast<float>(clampd(dt, 0.0, 0.1));
+  world.update(ft.target, simDt, inputs);
+  UpdateVisualHeights(simDt);
   UpdateSnowball(ft.target, static_cast<float>(clampd(dt, 0.0, 0.1)));
   UpdateDecor(ft.target);
   ScanPopupMenus(ft.target);

@@ -54,3 +54,17 @@
 4428	4457	1795445542478507501	libsnowcore.a	6bad95a04d9daceb
 2	5248	1795445543268514533	CMakeFiles/snow_tests.dir/tests/test_fullscreen.cpp.o	5019029e394bd343
 5248	5349	1795445543369515432	bin/snow_tests	c92354b7aedc229c
+0	10	0	/home/ubuntu/projects/desktop-snow/build-linux/CMakeFiles/cmake.verify_globs	bf1ee6cc80fd65c8
+1	2192	1795447380265823249	CMakeFiles/snowcore.dir/src/core/actors.cpp.o	83ff85032c1c5752
+2	2392	1795447380464825024	CMakeFiles/snowcore.dir/src/core/pile.cpp.o	66871ee3ae4dd6d5
+2	5340	1795447383412851309	CMakeFiles/snowcore.dir/src/core/world.cpp.o	b7e924b0794e99c7
+5340	5403	1795447383476851880	libsnowcore.a	6bad95a04d9daceb
+2392	6124	1795447384197858309	CMakeFiles/snow_tests.dir/tests/test_pile.cpp.o	d88791f2e673297
+5403	7683	1795447385754872192	CMakeFiles/snow_tests.dir/tests/test_snowball.cpp.o	3e6ec73872b0210e
+2192	9381	1795447387453887340	CMakeFiles/snow_tests.dir/tests/test_fullscreen.cpp.o	5019029e394bd343
+6124	9656	1795447387728889790	CMakeFiles/snow_tests.dir/tests/test_world.cpp.o	c74717519c6b781d
+9656	9767	1795447387839890778	bin/snow_tests	c92354b7aedc229c
+0	11	0	/home/ubuntu/projects/desktop-snow/build-linux/CMakeFiles/cmake.verify_globs	bf1ee6cc80fd65c8
+1	2352	1795447503459913434	CMakeFiles/snowcore.dir/src/core/world.cpp.o	b7e924b0794e99c7
+2352	2373	1795447503481913628	libsnowcore.a	6bad95a04d9daceb
+2373	2477	1795447503584914531	bin/snow_tests	c92354b7aedc229c

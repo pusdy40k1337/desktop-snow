@@ -2,6 +2,7 @@
 // Units: local x in physical px from the left end of the edge, heights in px.
 // "Mass" is height-px summed over columns (height * 1 column).
 #pragma once
+#include <cmath>
 #include <cstdint>
 #include <vector>
 
@@ -80,5 +81,30 @@ class PileModel {
   std::vector<float> tmp_;
   uint32_t version_ = 0;
 };
+
+// The renderer shows a smoothed copy of the heightmap: the simulation keeps its
+// exact target heights (mass, snowballs, melt), while `visual` approaches them
+// with an exponential ease so a mouse stroke never makes the drift jump.
+// Returns true when anything moved (the caller then rebuilds the geometry).
+inline bool SmoothHeights(std::vector<float>& visual, const std::vector<float>& target, float k) {
+  if (visual.size() != target.size()) {
+    visual = target;
+    return true;
+  }
+  bool changed = false;
+  for (size_t i = 0; i < target.size(); ++i) {
+    const float d = target[i] - visual[i];
+    if (std::fabs(d) < 0.02f) {
+      if (visual[i] != target[i]) {
+        visual[i] = target[i];
+        changed = true;
+      }
+      continue;
+    }
+    visual[i] += d * k;
+    changed = true;
+  }
+  return changed;
+}
 
 }  // namespace snow

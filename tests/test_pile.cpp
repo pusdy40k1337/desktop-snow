@@ -170,3 +170,21 @@ TEST(pile_version_changes_only_on_shape_change) {
   m.deposit(10, 1);
   CHECK(m.version() != v0);
 }
+
+TEST(pile_visual_heights_ease_towards_the_target) {
+  std::vector<float> target = {0.f, 10.f, 4.f};
+  std::vector<float> visual = {8.f, 0.f, 4.f};
+  CHECK(SmoothHeights(visual, target, 0.5f));  // something moved
+  CHECK_NEAR(visual[0], 4.0, 1e-4);
+  CHECK_NEAR(visual[1], 5.0, 1e-4);
+  // Converges without overshooting.
+  for (int i = 0; i < 40; ++i) SmoothHeights(visual, target, 0.5f);
+  CHECK_NEAR(visual[0], 0.0, 0.05);
+  CHECK_NEAR(visual[1], 10.0, 0.05);
+  CHECK_NEAR(visual[2], 4.0, 0.05);
+  // A resize copies the target at once instead of easing from stale sizes.
+  std::vector<float> small = {1.f};
+  CHECK(SmoothHeights(small, target, 0.2f));
+  CHECK(small.size() == 3 && small[1] == 10.f);
+  CHECK(!SmoothHeights(small, target, 0.2f));  // already settled
+}
