@@ -116,3 +116,27 @@ TEST(knock_parts_fly_together_and_return) {
   // Custom colours never change the physics: the same seed gives the same throw.
   CHECK(KnockPartAt(0.25, 1, 99, KnockPart::Top).dx == KnockPartAt(0.25, 1, 99, KnockPart::Top).dx);
 }
+
+TEST(knock_parts_land_on_the_surface_not_at_their_own_height) {
+  const float H = 92.f;  // a real snowman on a 100 % monitor
+  auto dropOf = [&](KnockPart part) {
+    const int i = static_cast<int>(part);
+    return (-kPartHalfHeight[i] - kPartPivotY[i]) * H;
+  };
+  // After the throw the hat, the face (with the carrot), the arms and the scarf
+  // lie on the surface the snowman stood on: their dy reaches the full drop
+  // instead of stopping at head/body height.
+  for (KnockPart part : {KnockPart::Hat, KnockPart::Face, KnockPart::ArmLeft, KnockPart::Scarf, KnockPart::Buttons}) {
+    const float drop = dropOf(part);
+    const PartPose lying = KnockPartAt(1.55, 1, 5, part, H);
+    CHECK_MSG(lying.dy > 20.f, "part falls below its own rest height");
+    CHECK_NEAR(lying.dy, drop, 1.5);
+  }
+  // And every part still ends exactly at its rest pose for the rebuild.
+  for (int i = 0; i < static_cast<int>(KnockPart::Count); ++i) {
+    const PartPose end = KnockPartAt(kKnockDuration, -1, 5, static_cast<KnockPart>(i), H);
+    CHECK(end.done && end.dx == 0.f && end.dy == 0.f && end.rot == 0.f);
+  }
+  // The bottom ball already rests on the surface: its drop is zero.
+  CHECK_NEAR(KnockPartAt(1.55, 1, 5, KnockPart::Bottom, H).dy, 0.f, 0.5);
+}

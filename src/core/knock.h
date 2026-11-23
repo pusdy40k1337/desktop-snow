@@ -103,7 +103,22 @@ struct PartPose {
 // body (so the pieces stay together in the air), a per-part multiplier, a
 // little seed jitter, gravity, one soft bounce off the edge and an exact return
 // to the original spot at kKnockDuration.
-inline PartPose KnockPartAt(double t, int dir, uint32_t seed, KnockPart part) {
+// Half height of each part in unit space: the pieces come to rest with their
+// own bottom on the surface, not at their original height inside the snowman.
+constexpr float kPartHalfHeight[] = {0.200f, 0.150f, 0.112f, 0.070f, 0.028f, 0.030f, 0.030f, 0.018f, 0.070f};
+
+inline float KnockSmooth(float u) {
+  u = std::clamp(u, 0.f, 1.f);
+  return u * u * (3.f - 2.f * u);
+}
+
+// Ballistic throw with a real floor: `dy` is px below the part's rest position
+// (negative = in the air, positive = fallen). Every part falls until its own
+// bottom touches the surface the snowman stood on (`height` = snowman height in
+// px, `embed` = px of bite into the snow), bounces once, lies there, and only
+// then eases back to the exact rest pose for the rebuild.
+inline PartPose KnockPartAt(double t, int dir, uint32_t seed, KnockPart part, float height = 1.f,
+                            float embed = 0.f) {
   PartPose p;
   const int i = static_cast<int>(part);
   if (t <= 0) return p;
@@ -117,17 +132,42 @@ inline PartPose KnockPartAt(double t, int dir, uint32_t seed, KnockPart part) {
   const double mult = static_cast<double>(kPartImpulse[i]) * KnockRand(seed + 17u * static_cast<uint32_t>(i + 1), 0.90, 1.10);
   const double throwX = 150.0 * mult;
   const double vy0 = -KnockRand(seed + 29u * static_cast<uint32_t>(i + 1), 430.0, 560.0) * mult;
-  p.dx = static_cast<float>(static_cast<double>(dir) * throwX * std::sin(std::pow(u, 0.85) * pi));
-  double dy = vy0 * t + 0.5 * g * t * t;
-  const double floorT = -2.0 * vy0 / g;
-  if (t > floorT) {
-    // One soft bounce, then rests until the pieces fly back together.
-    const double tb = t - floorT;
-    const double vb = 0.32 * std::fabs(vy0);
-    dy = -vb * tb + 0.5 * g * tb * tb;
-    if (dy > 0.0) dy = 0.0;
+
+  // Distance from the part's rest height down to its own bottom on the surface.
+  const double drop = std::max(0.f, -kPartHalfHeight[i] - kPartPivotY[i]) * static_cast<double>(height) +
+                      static_cast<double>(embed);
+  const double disc = vy0 * vy0 + 2.0 * g * drop;
+  const double tFloor = (-vy0 + std::sqrt(std::max(0.0, disc))) / g;  // first touch-down
+  double y;  // px below the rest position
+  if (t < tFloor) {
+    y = vy0 * t + 0.5 * g * t * t;
+    if (y > drop) y = drop;
+  } else {
+    // One soft bounce off the surface, then it stays on it.
+    const double vb = -0.32 * std::fabs(vy0 + g * tFloor);
+    const double tb = t - tFloor;
+    y = drop + vb * tb + 0.5 * g * tb * tb;
+    if (y > drop) y = drop;
   }
-  p.dy = static_cast<float>(std::min(0.0, dy));
+
+  const double holdEnd = 0.78 * kKnockDuration;
+  double dxOut;
+  if (t < tFloor) {
+    dxOut = static_cast<double>(dir) * throwX * std::sin((t / std::max(1e-6, tFloor)) * pi * 0.5);
+  } else if (t < holdEnd) {
+    dxOut = static_cast<double>(dir) * throwX;
+  } else {
+    const double k = static_cast<double>(KnockSmooth(static_cast<float>((t - holdEnd) / (kKnockDuration - holdEnd))));
+    dxOut = static_cast<double>(dir) * throwX * (1.0 - k);
+  }
+  double dy = y;
+  if (t >= holdEnd) {
+    const double k = static_cast<double>(KnockSmooth(static_cast<float>((t - holdEnd) / (kKnockDuration - holdEnd))));
+    dy = drop * (1.0 - k);
+  }
+
+  p.dx = static_cast<float>(dxOut);
+  p.dy = static_cast<float>(dy);
   const double spinDir = (i % 2 == 0) ? 1.0 : -1.0;
   const double spin = KnockRand(seed + 37u * static_cast<uint32_t>(i + 1), 2.2, 4.8) * spinDir * static_cast<double>(dir);
   p.rot = static_cast<float>(spin * std::sin(u * pi) * std::pow(1.0 - u, 0.6));

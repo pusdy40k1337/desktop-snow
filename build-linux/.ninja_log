@@ -77,3 +77,6 @@
 0	10	0	/home/ubuntu/projects/desktop-snow/build-linux/CMakeFiles/cmake.verify_globs	bf1ee6cc80fd65c8
 2	943	1795449314407827590	CMakeFiles/snow_tests.dir/tests/test_knock.cpp.o	3b4848d0717071f7
 943	1051	1795449314514828530	bin/snow_tests	c92354b7aedc229c
+0	11	0	/home/ubuntu/projects/desktop-snow/build-linux/CMakeFiles/cmake.verify_globs	bf1ee6cc80fd65c8
+1	1008	1795452254557781082	CMakeFiles/snow_tests.dir/tests/test_knock.cpp.o	3b4848d0717071f7
+1008	1118	1795452254666782041	bin/snow_tests	c92354b7aedc229c

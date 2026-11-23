@@ -676,7 +676,7 @@ void DecorRenderer::DrawSnowmanBroken(const DecorFrame& f, const SnowmanDecor& s
   // Places one part: its unit-space pivot lands at base + pose, rotated.
   auto drawPart = [&](KnockPart part, auto&& body) {
     const int i = static_cast<int>(part);
-    const PartPose pose = KnockPartAt(t, dir, seed, part);
+    const PartPose pose = KnockPartAt(t, dir, seed, part, height);  // height = real floor for the fall
     const float pivotX = kPartPivotX[i] * height;
     const float pivotY = kPartPivotY[i] * height;
     const float c = std::cos(pose.rot), sn = std::sin(pose.rot);
