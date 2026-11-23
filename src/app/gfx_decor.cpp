@@ -3,6 +3,8 @@
 // from path geometries built once in unit space and placed with transforms.
 #include "gfx_decor.h"
 
+#include "../core/knock.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -651,6 +653,153 @@ void DecorRenderer::DrawSnowman(const DecorFrame& f, const SnowmanDecor& sm, D2D
     p.ellipse(0.f, -0.99f, 0.079f, 0.008f, Hex(0x3A4252));
     p.ringE(0.f, -0.99f, 0.094f, 0.013f, Hex(0x3E4756, 0.9f), 1.f * px);
   }
+}
+
+// ---------------------------------------------------------------------------
+// A snowman breaking apart after the gift train hits it
+
+void DecorRenderer::DrawSnowmanBroken(const DecorFrame& f, const SnowmanDecor& sm, D2D1_POINT_2F base,
+                                      float height, double t, int dir, uint32_t seed) {
+  (void)f;  // theme-independent: the parts keep the snowman's own colours
+  if (!dc_ || height < 4.f) return;
+  ensureGeometry();
+  const float px = 1.f / height;
+  const D2D1_COLOR_F snowC = Hex(0xF8FBFF);
+  const D2D1_COLOR_F outline = Hex(0x7F96BE, 0.85f);
+  const D2D1_COLOR_F coal = Hex(0x24242C);
+  const float rb = 0.200f, rm = 0.150f, rh = 0.112f;
+  const float cbY = -rb, cmY = -0.515f, chY = -0.747f;
+  const D2D1_COLOR_F scarfCol = Hex(DecorColorRgb(ModIdx(sm.scarf, kDecorColorCount)));
+  const D2D1_COLOR_F hatCol = Hex(DecorColorRgb(ModIdx(sm.hatColor, kDecorColorCount)));
+  const Painter p(dc_, brush_, roundCap_.Get());
+
+  // Places one part: its unit-space pivot lands at base + pose, rotated.
+  auto drawPart = [&](KnockPart part, auto&& body) {
+    const int i = static_cast<int>(part);
+    const PartPose pose = KnockPartAt(t, dir, seed, part);
+    const float pivotX = kPartPivotX[i] * height;
+    const float pivotY = kPartPivotY[i] * height;
+    const float c = std::cos(pose.rot), sn = std::sin(pose.rot);
+    const float tx = base.x + pivotX + pose.dx - (pivotX * c - pivotY * sn);
+    const float ty = base.y + pivotY + pose.dy - (pivotX * sn + pivotY * c);
+    TransformScope ts(dc_);
+    ts.set(Xf(height, height, pose.rot, tx, ty));
+    body();
+  };
+
+  auto ball = [&](KnockPart part, float cy, float r) {
+    drawPart(part, [&]() {
+      shadedEllipse(GradKind::Snow, snowC, 0.f, cy, r, r, -0.30f * r, -0.36f * r);
+      p.ring(0.f, cy, r, outline, 1.1f * px);
+    });
+  };
+
+  auto arm = [&](KnockPart part, float x0, float y0, float x1, float y1) {
+    drawPart(part, [&]() {
+      const D2D1_COLOR_F wood = Hex(0x6A4426);
+      const float w = std::max(0.014f, 1.7f * px);
+      p.line(x0, y0, x1, y1, wood, w);
+      const float dx = x1 - x0, dy = y1 - y0;
+      const float len = std::sqrt(dx * dx + dy * dy);
+      if (len < 1e-4f) return;
+      const float ux = dx / len, uy = dy / len;
+      auto twig = [&](float sx, float sy, float ang, float l) {
+        const float c = std::cos(ang), sn = std::sin(ang);
+        p.line(sx, sy, sx + (ux * c - uy * sn) * l, sy + (ux * sn + uy * c) * l, wood, w * 0.75f);
+      };
+      twig(x0 + dx * 0.55f, y0 + dy * 0.55f, -0.8f, 0.05f);
+      twig(x1, y1, 0.55f, 0.032f);
+      twig(x1, y1, -0.45f, 0.032f);
+    });
+  };
+
+  arm(KnockPart::ArmLeft, -0.135f, cmY - 0.005f, -0.250f, cmY - 0.075f);
+  arm(KnockPart::ArmRight, 0.135f, cmY - 0.005f, 0.250f, cmY - 0.115f);
+  ball(KnockPart::Bottom, cbY, rb);
+  ball(KnockPart::Middle, cmY, rm);
+  ball(KnockPart::Top, chY, rh);
+
+  drawPart(KnockPart::Buttons, [&]() {
+    for (int i = -1; i <= 1; ++i) {
+      const float by = cmY + 0.047f * static_cast<float>(i);
+      p.circle(0.f, by, 0.0155f, coal);
+      p.circle(-0.004f, by - 0.004f, 0.0155f * 0.3f, Hex(0xFFFFFF, 0.45f));
+    }
+  });
+
+  drawPart(KnockPart::Scarf, [&]() {
+    const D2D1_COLOR_F edge = Fade(Darken(scarfCol, 0.55f), 0.9f);
+    p.rounded(0.04f, -0.64f, 0.10f, -0.50f, 0.014f, scarfCol);
+    p.roundedStroke(0.04f, -0.64f, 0.10f, -0.50f, 0.014f, edge, 1.f * px);
+    p.line(0.045f, -0.508f, 0.095f, -0.508f, Lighten(scarfCol, 0.5f), 0.012f);
+    for (int i = 0; i < 4; ++i) {
+      const float fx = 0.05f + 0.014f * static_cast<float>(i);
+      p.line(fx, -0.502f, fx, -0.488f, Darken(scarfCol, 0.8f), 0.006f);
+    }
+    p.rounded(-0.115f, -0.676f, 0.115f, -0.626f, 0.025f, scarfCol);
+    p.rounded(-0.115f, -0.676f, 0.115f, -0.658f, 0.018f, Hex(0xFFFFFF, 0.14f));
+    p.line(-0.05f, -0.668f, -0.05f, -0.634f, Lighten(scarfCol, 0.5f), 0.011f);
+    p.line(0.012f, -0.668f, 0.012f, -0.634f, Lighten(scarfCol, 0.5f), 0.011f);
+    p.roundedStroke(-0.115f, -0.676f, 0.115f, -0.626f, 0.025f, edge, 1.f * px);
+  });
+
+  drawPart(KnockPart::Face, [&]() {
+    glow(Hex(0xFF8DA0), -0.066f, chY + 0.026f, 0.032f, 0.026f, 0.5f);
+    glow(Hex(0xFF8DA0), 0.066f, chY + 0.026f, 0.032f, 0.026f, 0.5f);
+    for (int side = -1; side <= 1; side += 2) {
+      const float ex = 0.04f * static_cast<float>(side);
+      p.circle(ex, chY - 0.016f, 0.0125f, coal);
+      p.circle(ex - 0.003f, chY - 0.02f, 0.004f, Hex(0xFFFFFF, 0.6f));
+    }
+    for (int i = 0; i < 5; ++i) {
+      const float u = (static_cast<float>(i) - 2.f) / 2.f;
+      p.circle(0.0225f * (static_cast<float>(i) - 2.f), chY + 0.044f + 0.013f * (1.f - u * u), 0.0075f, coal);
+    }
+    if (carrot_) {
+      TransformScope ns(dc_);
+      ns.set(Xf(0.09f, 0.09f, 0.12f, -0.004f, chY + 0.012f));
+      p.fill(carrot_.Get(), Hex(0xF28A25));
+      p.line(0.25f, -0.05f, 0.6f, -0.01f, Hex(0xB85A12, 0.7f), 0.035f);
+      p.line(0.18f, 0.07f, 0.5f, 0.07f, Hex(0xB85A12, 0.6f), 0.03f);
+      p.stroke(carrot_.Get(), Hex(0xA04A0E, 0.85f), 1.f * px / 0.09f);
+    }
+  });
+
+  drawPart(KnockPart::Hat, [&]() {
+    if (sm.hat == 1) {
+      const D2D1_COLOR_F black = Hex(0x25252D);
+      p.ellipse(0.f, -0.862f, 0.108f, 0.017f, Hex(0x2F2F38));
+      p.ringE(0.f, -0.862f, 0.108f, 0.017f, Hex(0x0E0E12, 0.8f), 1.f * px);
+      p.rounded(-0.063f, -0.995f, 0.063f, -0.866f, 0.012f, black);
+      p.rect(-0.063f, -0.896f, 0.063f, -0.872f, hatCol);
+      p.rect(-0.014f, -0.896f, 0.014f, -0.872f, Hex(0xE8B93E));
+      p.rect(-0.046f, -0.985f, -0.036f, -0.905f, Hex(0xFFFFFF, 0.14f));
+      p.ellipse(0.f, -0.995f, 0.063f, 0.011f, Hex(0x383842));
+      p.roundedStroke(-0.063f, -0.995f, 0.063f, -0.866f, 0.012f, Hex(0x0E0E12, 0.8f), 1.f * px);
+    } else if (sm.hat == 2) {
+      const D2D1_COLOR_F edge = Fade(Darken(hatCol, 0.55f), 0.9f);
+      {
+        TransformScope ds(dc_);
+        ds.set(MakeM(0.105f, 0.f, 0.f, 0.09f, 0.f, -0.85f));
+        p.fill(beanie_.Get(), hatCol);
+        p.stroke(beanie_.Get(), edge, 1.f * px / 0.09f);
+      }
+      p.rounded(-0.113f, -0.872f, 0.113f, -0.836f, 0.014f, Lighten(hatCol, 0.35f));
+      p.roundedStroke(-0.113f, -0.872f, 0.113f, -0.836f, 0.014f, edge, 1.f * px);
+      shadedEllipse(GradKind::Shade, Lighten(hatCol, 0.55f), 0.f, -0.953f, 0.03f, 0.03f, -0.01f, -0.012f);
+      p.ring(0.f, -0.953f, 0.03f, edge, 1.f * px);
+    } else if (sm.hat == 3) {
+      p.fill(bucket_.Get(), Hex(0x8E9AAA));
+      p.rect(-0.062f, -0.925f, 0.062f, -0.905f, hatCol);
+      p.rect(-0.062f, -0.92f, -0.05f, -0.85f, Hex(0xFFFFFF, 0.16f));
+      p.line(-0.08f, -0.94f, 0.08f, -0.94f, Hex(0x4C5666, 0.7f), 0.006f);
+      p.line(-0.074f, -0.905f, 0.074f, -0.905f, Hex(0x4C5666, 0.7f), 0.006f);
+      p.stroke(bucket_.Get(), Hex(0x3E4756, 0.9f), 1.1f * px);
+      p.ellipse(0.f, -0.99f, 0.094f, 0.013f, Hex(0xB4BFCC));
+      p.ellipse(0.f, -0.99f, 0.079f, 0.008f, Hex(0x3A4252));
+      p.ringE(0.f, -0.99f, 0.094f, 0.013f, Hex(0x3E4756, 0.9f), 1.f * px);
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------

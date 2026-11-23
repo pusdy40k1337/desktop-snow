@@ -78,4 +78,60 @@ inline KnockPose KnockAt(double t, int dir, uint32_t seed = 0) {
   return p;
 }
 
+// ---- broken snowman: every element flies on its own ------------------------
+// The parts are the actual pieces of the artwork (three balls, hat, scarf,
+// stick arms, coal buttons, the face with its carrot), so the renderer can draw
+// each one with its normal shape and colour while it tumbles.
+enum class KnockPart : int { Bottom = 0, Middle, Top, Hat, Scarf, ArmLeft, ArmRight, Buttons, Face, Count };
+
+// How hard each part is thrown relative to the base impulse.
+constexpr float kPartImpulse[] = {0.80f, 0.90f, 1.00f, 1.30f, 1.05f, 1.12f, 1.12f, 1.02f, 1.18f};
+
+// Local pivots of the parts in the snowman's unit space (1 = full height,
+// y = 0 at the base). Shared with the renderer.
+constexpr float kPartPivotY[] = {-0.200f, -0.515f, -0.747f, -0.860f, -0.650f, -0.520f, -0.520f, -0.515f, -0.747f};
+constexpr float kPartPivotX[] = {0.f, 0.f, 0.f, 0.090f, 0.f, -0.135f, 0.135f, 0.f, 0.f};
+
+struct PartPose {
+  float dx = 0;   // px along the train direction
+  float dy = 0;   // px, negative = air
+  float rot = 0;  // radians
+  bool done = false;
+};
+
+// Deterministic, lively but coordinated throw: the same base impulse as the
+// body (so the pieces stay together in the air), a per-part multiplier, a
+// little seed jitter, gravity, one soft bounce off the edge and an exact return
+// to the original spot at kKnockDuration.
+inline PartPose KnockPartAt(double t, int dir, uint32_t seed, KnockPart part) {
+  PartPose p;
+  const int i = static_cast<int>(part);
+  if (t <= 0) return p;
+  if (t >= kKnockDuration) {
+    p.done = true;
+    return p;
+  }
+  const double pi = 3.14159265358979;
+  const double u = t / kKnockDuration;
+  const double g = 1700.0;
+  const double mult = static_cast<double>(kPartImpulse[i]) * KnockRand(seed + 17u * static_cast<uint32_t>(i + 1), 0.90, 1.10);
+  const double throwX = 150.0 * mult;
+  const double vy0 = -KnockRand(seed + 29u * static_cast<uint32_t>(i + 1), 430.0, 560.0) * mult;
+  p.dx = static_cast<float>(static_cast<double>(dir) * throwX * std::sin(std::pow(u, 0.85) * pi));
+  double dy = vy0 * t + 0.5 * g * t * t;
+  const double floorT = -2.0 * vy0 / g;
+  if (t > floorT) {
+    // One soft bounce, then rests until the pieces fly back together.
+    const double tb = t - floorT;
+    const double vb = 0.32 * std::fabs(vy0);
+    dy = -vb * tb + 0.5 * g * tb * tb;
+    if (dy > 0.0) dy = 0.0;
+  }
+  p.dy = static_cast<float>(std::min(0.0, dy));
+  const double spinDir = (i % 2 == 0) ? 1.0 : -1.0;
+  const double spin = KnockRand(seed + 37u * static_cast<uint32_t>(i + 1), 2.2, 4.8) * spinDir * static_cast<double>(dir);
+  p.rot = static_cast<float>(spin * std::sin(u * pi) * std::pow(1.0 - u, 0.6));
+  return p;
+}
+
 }  // namespace snow

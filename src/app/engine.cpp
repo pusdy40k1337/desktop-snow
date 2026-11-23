@@ -1805,10 +1805,6 @@ bool Engine::Impl::RenderOverlay(Overlay& ov, const FrameTiming& ft) {
       KnockBalls(now, hb);  // snowballs on the rails fly too
     }
     auto drawSnowmenOn = [&](uint64_t surfaceId) {
-      auto decColor = [](int idx) {
-        const uint32_t v = DecorColorRgb(idx);
-        return D2D1::ColorF(((v >> 16) & 0xFF) / 255.f, ((v >> 8) & 0xFF) / 255.f, (v & 0xFF) / 255.f, 1.f);
-      };
       for (const auto& dr : snowmenDraw) {
         if (dr.surfaceId != surfaceId) continue;
         auto kit = knockedAt.find(dr.sm->id);
@@ -1823,37 +1819,11 @@ bool Engine::Impl::RenderOverlay(Overlay& ov, const FrameTiming& ft) {
                   static_cast<int>(b.bottom) + 20);
         if (!box.intersects(ov.rect)) continue;
         if (flying) {
-          // A real hit: the snowman bursts into three snowballs (and its hat
-          // and scarf), each with its own impulse, spin and gravity, then the
-          // parts settle back into a snowman on the same spot.
-          const float h = dr.height;
-          struct Part {
-            float up, r;
-            uint32_t i;
-          };
-          const Part ps[3] = {{0.26f * h, 0.30f * h, 0}, {0.60f * h, 0.22f * h, 1}, {0.84f * h, 0.16f * h, 2}};
-          for (const auto& pp : ps) {
-            const KnockPose kp =
-                KnockAt(kt * (1.0 + 0.10 * pp.i), kit->second.dir, kit->second.seed + 31u * (pp.i + 1u));
-            const float ox = kp.dx + static_cast<float>(kit->second.dir) * static_cast<float>(pp.i) * 16.f;
-            const Vec2 c(dr.base.x + ox, dr.base.y - pp.up + kp.dy);
-            decorR.DrawSnowball(f, D2D1::Point2F(c.x, c.y), pp.r, kp.rot);
-          }
-          const KnockPose topKp = KnockAt(kt * 1.20, kit->second.dir, kit->second.seed + 93u);
-          const Vec2 topC(dr.base.x + topKp.dx + static_cast<float>(kit->second.dir) * 32.f,
-                          dr.base.y - 0.84f * h + topKp.dy);
-          if (dr.sm->hat != 0)
-            dc->FillRoundedRectangle(
-                D2D1::RoundedRect(D2D1::RectF(topC.x - 0.10f * h, topC.y - 0.44f * h, topC.x + 0.10f * h,
-                                              topC.y - 0.26f * h),
-                                  2.f, 2.f),
-                brush(decColor(dr.sm->hatColor)));
-          if (dr.sm->scarf != 0)
-            dc->FillRoundedRectangle(
-                D2D1::RoundedRect(D2D1::RectF(topC.x - 0.11f * h, topC.y - 0.02f * h, topC.x + 0.11f * h,
-                                              topC.y + 0.05f * h),
-                                  2.f, 2.f),
-                brush(decColor(dr.sm->scarf)));
+          // Real parts: three balls, stick arms, coal buttons, scarf, face with
+          // the carrot and the hat each fly on their own pose (core/knock.h)
+          // and keep their normal shapes and colours.
+          decorR.DrawSnowmanBroken(f, *dr.sm, D2D1::Point2F(dr.base.x, dr.base.y), dr.height, kt,
+                                   kit->second.dir, kit->second.seed);
           content = true;
           continue;
         }

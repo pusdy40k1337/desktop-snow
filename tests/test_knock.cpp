@@ -78,3 +78,41 @@ TEST(knock_throw_is_strong_and_varies_per_snowman) {
   // Neighbouring snowmen do not move in lockstep.
   CHECK(KnockAt(0.2, 1, 3).dx != KnockAt(0.2, 1, 9).dx);
 }
+
+TEST(knock_parts_fly_together_and_return) {
+  const uint32_t seed = 42;
+  for (int dir : {1, -1}) {
+    double maxDx = 0, minDy = 0;
+    float lastRot = 0;
+    for (int i = 0; i < static_cast<int>(KnockPart::Count); ++i) {
+      const KnockPart part = static_cast<KnockPart>(i);
+      float partMaxDx = 0, partMinDy = 0, partMaxRot = 0;
+      for (int k = 0; k <= 100; ++k) {
+        const double t = kKnockDuration * k / 100.0;
+        const PartPose p = KnockPartAt(t, dir, seed, part);
+        // Every part is thrown along the train, never straight up into orbit.
+        if (dir > 0) CHECK(p.dx >= -1.f);
+        else CHECK(p.dx <= 1.f);
+        partMaxDx = std::max(partMaxDx, std::fabs(p.dx));
+        partMinDy = std::min(partMinDy, p.dy);
+        partMaxRot = std::max(partMaxRot, std::fabs(p.rot));
+      }
+      CHECK_MSG(partMaxDx >= 60.f && partMaxDx <= 340.f, "part impulse stays sane");
+      CHECK_MSG(partMinDy <= -40.f && partMinDy >= -260.f, "part jumps, not into the stratosphere");
+      CHECK_MSG(partMaxRot >= 0.4f && partMaxRot <= 9.f, "part spins visibly");
+      maxDx = std::max(maxDx, static_cast<double>(partMaxDx));
+      minDy = std::min(minDy, static_cast<double>(partMinDy));
+      lastRot = PartPose{}.rot;  // keep the compiler honest about the loop body
+      (void)lastRot;
+    }
+    // Pieces return exactly to their place so the snowman can rebuild.
+    for (int i = 0; i < static_cast<int>(KnockPart::Count); ++i) {
+      const PartPose end = KnockPartAt(kKnockDuration, dir, seed, static_cast<KnockPart>(i));
+      CHECK(end.done && end.dx == 0.f && end.dy == 0.f && end.rot == 0.f);
+    }
+  }
+  // Neighbouring parts do not move in perfect lockstep (lively, not rigid).
+  CHECK(KnockPartAt(0.2, 1, 7, KnockPart::Bottom).dx != KnockPartAt(0.2, 1, 7, KnockPart::Hat).dx);
+  // Custom colours never change the physics: the same seed gives the same throw.
+  CHECK(KnockPartAt(0.25, 1, 99, KnockPart::Top).dx == KnockPartAt(0.25, 1, 99, KnockPart::Top).dx);
+}

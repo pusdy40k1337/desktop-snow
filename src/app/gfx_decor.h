@@ -36,6 +36,11 @@ class DecorRenderer {
   // wobble: lean angle in radians (window jolts, yeti scares).
   void DrawSnowman(const DecorFrame& f, const SnowmanDecor& sm, D2D1_POINT_2F base, float height,
                    float build, float wobble, bool highlight);
+  // A snowman hit by the train: every piece (three balls, stick arms, coal
+  // buttons, scarf, face with the carrot, hat) flies on its own pose from
+  // core/knock.h and is rebuilt on the spot when the tumble ends.
+  void DrawSnowmanBroken(const DecorFrame& f, const SnowmanDecor& sm, D2D1_POINT_2F base, float height,
+                         double t, int dir, uint32_t seed);
 
   void DrawSanta(const DecorFrame& f, const SantaState& s);
   void DrawTrain(const DecorFrame& f, const TrainState& t);
