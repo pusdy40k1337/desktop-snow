@@ -342,3 +342,52 @@ TEST(world_sweep_keeps_debris_per_frame_bounded) {
     prev = nowDebris;
   }
 }
+
+TEST(world_slow_cursor_still_erases_the_drift) {
+  World w;
+  SimSettings set = Quiet();
+  set.initialDusting = 0.5f;
+  set.cursorSweep = true;
+  w.configure(set);
+  w.setMonitors(OneMonitor());
+  std::vector<WindowInput> wins = {Win(1, RectI(400, 500, 1400, 900), 0)};
+  w.update(0.016, 1 / 60.f, wins);
+  const float before = w.surface(1)->pile.mass();
+  float x = 450.f;
+  for (int f = 0; f < 60; ++f) {
+    x += 2.f;  // ~120 px/s: slow, below the old 280 px/s threshold
+    w.setCursor(Vec2(x, 495.f), true);
+    w.update(0.033 + f / 60.0, 1 / 60.f, wins);
+  }
+  CHECK(w.surface(1)->pile.mass() < before * 0.9f);
+}
+
+TEST(world_breeze_moves_flakes_not_just_their_velocity_field) {
+  SimSettings set = Quiet();
+  set.snowing = true;
+  set.intensity = 1.f;
+  World a, b;
+  a.configure(set);
+  b.configure(set);
+  a.setMonitors(OneMonitor());
+  b.setMonitors(OneMonitor());
+  std::vector<WindowInput> none;
+  for (int i = 0; i < 120; ++i) {
+    a.update(i / 60.0, 1 / 60.f, none);
+    b.update(i / 60.0, 1 / 60.f, none);
+  }
+  a.setCursor(Vec2(300.f, 300.f), true);
+  a.setCursor(Vec2(1500.f, 300.f), true);  // fast stroke
+  b.setCursor(Vec2(300.f, 300.f), true);
+  b.setCursor(Vec2(300.f, 300.f), true);  // no movement
+  a.update(2.1, 1 / 60.f, none);
+  b.update(2.1, 1 / 60.f, none);
+  const auto& pa = a.particles();
+  const auto& pb = b.particles();
+  CHECK(!pa.empty() && pa.size() == pb.size());
+  bool moved = false;
+  for (size_t i = 0; i < pa.size(); ++i)
+    if (pa[i].kind == ParticleKind::Flake && (std::fabs(pa[i].x - pb[i].x) > 0.5f || std::fabs(pa[i].y - pb[i].y) > 0.5f))
+      moved = true;
+  CHECK(moved);
+}

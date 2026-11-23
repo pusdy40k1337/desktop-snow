@@ -219,6 +219,9 @@ struct Engine::Impl {
     uint32_t id = 0;
     uint64_t surface = 0;
     float localX = 0;   // px from the surface's left end (follows the window)
+    float y = 0;        // centre Y in screen px: the edge is a floor, not a rail
+    float vy = 0;       // falling speed after release in the air
+    bool falling = false;
     float mass = 0, radius0 = 6, radius = 6, spin = 0;
     bool held = false;
     uint32_t atopOf = 0;  // ball id this one rests on (0 = on the edge)
@@ -2051,10 +2054,9 @@ Vec2 Engine::Impl::BallPos(const Ball& b) const {
       return Vec2(pp.x, pp.y - p->radius * 0.92f - b.radius * 0.92f);
     }
   }
-  // The bottom of the ball is pinned to the edge (1.5 px of bite), so a growing
-  // ball rolls ON TOP of the taskbar/window instead of sinking through it.
-  const float edgeY = static_cast<float>(s->rect.top);
-  return Vec2(static_cast<float>(s->rect.left) + lx, edgeY - b.radius + 1.5f * s->scale);
+  // The edge is only a floor: a lifted ball keeps its own Y and never sinks
+  // below the surface.
+  return Vec2(static_cast<float>(s->rect.left) + lx, b.y);
 }
 
 Engine::Impl::Ball* Engine::Impl::BallUnder(POINT pt) {
@@ -2081,6 +2083,8 @@ bool Engine::Impl::OnSnowballMouse(UINT msg, POINT pt) {
       }
       picked->atopOf = 0;
       picked->held = true;
+      picked->falling = false;
+      picked->vy = 0.f;
       return true;
     }
     const Surface* s = nullptr;
@@ -2096,6 +2100,7 @@ bool Engine::Impl::OnSnowballMouse(UINT msg, POINT pt) {
     b.mass = world.carvePile(s->id, std::clamp(lx - b.radius0, 0.f, s->pile.width()),
                              std::clamp(lx + b.radius0, 0.f, s->pile.width()));
     b.radius = SnowballRadius(b.mass, b.radius0);
+    b.y = BallFloorY(static_cast<float>(s->rect.top), b.radius, 1.5f * s->scale);
     balls.push_back(b);
     // Keep the desk tidy: drop the oldest resting ball once there are too many.
     while (balls.size() > 32) {
@@ -2113,11 +2118,12 @@ bool Engine::Impl::OnSnowballMouse(UINT msg, POINT pt) {
     held->held = false;
     // Put it down on top of another ball when it lands there: three balls make
     // a snowman.
+    const Vec2 heldPos = BallPos(*held);
     Ball* host = nullptr;
     for (auto& b : balls) {
       if (&b == held || b.held || b.surface != held->surface || b.atopOf || b.stack >= 2) continue;
-      if (b.radius < held->radius * 0.75f) continue;
-      if (std::fabs(b.localX - held->localX) <= (b.radius + held->radius) * 0.55f) { host = &b; break; }
+      const Vec2 hp = BallPos(b);
+      if (BallCanStack(heldPos.x, heldPos.y, held->radius, hp.x, hp.y, b.radius)) { host = &b; break; }
     }
     if (host) {
       held->atopOf = host->id;
@@ -2146,6 +2152,9 @@ bool Engine::Impl::OnSnowballMouse(UINT msg, POINT pt) {
                       balls.end());
         }
       }
+    } else {
+      held->falling = true;
+      held->vy = 0.f;
     }
     return true;
   }
@@ -2154,37 +2163,56 @@ bool Engine::Impl::OnSnowballMouse(UINT msg, POINT pt) {
 
 void Engine::Impl::UpdateSnowball(double now, float dt) {
   ballLastNow = now;
-  (void)dt;
   if (c.decorateMode || c.paused || !c.settings.extras.snowballs) {
-    for (auto& b : balls) b.held = false;
+    for (auto& b : balls) {
+      b.held = false;
+      b.falling = false;
+    }
     return;
   }
   for (auto& b : balls) {
     if (b.hitT0 >= 0 && now - b.hitT0 > kKnockDuration) b.hitT0 = -1;
-    if (!b.held) continue;
     const Surface* s = world.surface(b.surface);
-    if (!s) { b.held = false; continue; }
+    if (!s) {
+      b.held = false;
+      b.falling = false;
+      continue;
+    }
+    const float scale = s->scale;
+    const float edgeTop = static_cast<float>(s->rect.top);
+    if (b.atopOf) continue;  // position comes from the ball underneath
+    if (!b.held) {
+      // Released in the air: gravity brings it back to the edge.
+      BallFallStep(b.y, b.vy, edgeTop, b.radius, dt, 2400.f, 1.5f * scale);
+      continue;
+    }
     POINT pt{};
     if (!GetCursorPos(&pt)) return;
     const float lx = std::clamp(static_cast<float>(pt.x) - static_cast<float>(s->rect.left), 0.f,
                                 std::max(0.f, s->pile.width()));
-    // Carve every column the ball rolls over (interpolated so fast strokes miss
-    // nothing); a bigger ball scoops a wider strip, so it grows quickly.
-    const float from = b.localX;
-    const float half = std::max(b.radius, b.radius0);
-    const float step = std::max(3.f, b.radius0);
-    const int n = std::max(1, static_cast<int>(std::fabs(lx - from) / step) + 1);
-    float collected = 0.f;
-    for (int i = 1; i <= n; ++i) {
-      const float mid = from + (lx - from) * static_cast<float>(i) / static_cast<float>(n);
-      const float a = std::clamp(mid - half, 0.f, s->pile.width());
-      const float e = std::clamp(mid + half, 0.f, s->pile.width());
-      collected += world.carvePile(b.surface, a, e);
+    const float floorY = BallFloorY(edgeTop, b.radius, 1.5f * scale);
+    const float wantedY = static_cast<float>(pt.y);
+    const bool onSurface = wantedY >= floorY - 0.5f;
+    if (onSurface) {
+      // Rolling on the drift: carve the strip it passes over and grow.
+      const float from = b.localX;
+      const float half = std::max(b.radius, b.radius0);
+      const float step = std::max(3.f, b.radius0);
+      const int n = std::max(1, static_cast<int>(std::fabs(lx - from) / step) + 1);
+      float collected = 0.f;
+      for (int i = 1; i <= n; ++i) {
+        const float mid = from + (lx - from) * static_cast<float>(i) / static_cast<float>(n);
+        const float a = std::clamp(mid - half, 0.f, s->pile.width());
+        const float e = std::clamp(mid + half, 0.f, s->pile.width());
+        collected += world.carvePile(b.surface, a, e);
+      }
+      b.mass += collected;
+      b.radius = SnowballRadius(b.mass, b.radius0);
+      b.spin += (lx - from) / std::max(4.f, b.radius);
     }
-    b.mass += collected;
-    b.radius = SnowballRadius(b.mass, b.radius0);
-    b.spin += (lx - from) / std::max(4.f, b.radius);
     b.localX = lx;
+    // Keep the current size in the air; the edge only stops it from sinking.
+    b.y = BallClampToFloor(wantedY, edgeTop, b.radius, 1.5f * scale);
   }
 }
 

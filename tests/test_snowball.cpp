@@ -79,3 +79,27 @@ TEST(snowball_grows_into_a_big_ball_quickly_and_stops) {
   CHECK(SnowballRadius(2000.f, r0) <= r0 * kSnowballMaxRadiusFactor + 1e-4f);
   CHECK(SnowballRadius(1e6f, r0) == r0 * kSnowballMaxRadiusFactor);
 }
+
+TEST(snowball_can_be_lifted_and_only_stops_at_the_surface) {
+  const float top = 1000.f, r = 12.f;
+  const float floorY = BallFloorY(top, r);
+  CHECK_NEAR(floorY, top - r + kBallEmbed, 1e-4);
+  // Lifted above the edge: the ball follows the cursor.
+  CHECK_NEAR(BallClampToFloor(600.f, top, r), 600.f, 1e-4);
+  // Pushed into the surface: it cannot sink below the edge.
+  CHECK_NEAR(BallClampToFloor(1200.f, top, r), floorY, 1e-4);
+  // Released in the air it falls under gravity and lands exactly on the edge.
+  float y = 600.f, vy = 0.f;
+  for (int i = 0; i < 240; ++i) BallFallStep(y, vy, top, r, 1.f / 60.f);
+  CHECK_NEAR(y, floorY, 0.01);
+  CHECK(vy == 0.f);
+}
+
+TEST(snowball_stacks_only_on_a_bigger_ball_below_it) {
+  // A ball released right above a bigger one glues on top.
+  CHECK(BallCanStack(500.f, 900.f, 10.f, 505.f, 985.f, 22.f));
+  // Released beside it (not above) - no stack, it just falls.
+  CHECK(!BallCanStack(560.f, 900.f, 10.f, 505.f, 985.f, 22.f));
+  // A bigger ball dropped on a smaller one does not use it as a base.
+  CHECK(!BallCanStack(500.f, 900.f, 30.f, 505.f, 985.f, 12.f));
+}

@@ -406,8 +406,8 @@ void World::updateCursor(float dt) {
   // A fast cursor is a breeze for the falling flakes: they drift away from the
   // pointer instead of passing straight through it. Works even with reduced
   // motion (weaker), because the user explicitly expects the reaction.
-  if (speed > 60.f && !particles_.empty()) {
-    const float R = 115.f;
+  if (speed > 25.f && !particles_.empty()) {
+    const float R = 125.f;
     const float R2 = R * R;
     const float strength = std::min(1.f, (speed - 60.f) / 900.f) * (s_.reducedMotion ? 0.45f : 1.f);
     for (auto& p : particles_) {
@@ -428,13 +428,14 @@ void World::updateCursor(float dt) {
   if (s_.reducedMotion) return;
 
   if (!s_.cursorSweep) return;
-  // Sweeping a thick drift must stay smooth: cap the debris spawned per frame
-  // instead of turning the whole carved slab into particles at once.
+  // Any movement clears snow: a slow stroke brushes it away smoothly, a fast
+  // flick also throws particles. Only the debris has a speed gate.
+  const float move = (cursor_ - cursorPrev_).length();
+  if (move < 0.5f) return;
   int budget = 12;
   for (Surface* s : active_) {
     if (budget <= 0) break;
     float scale = s->scale;
-    if (speed < 280.f * scale) continue;
     float lx = cursor_.x - static_cast<float>(s->rect.left);
     if (lx < 0 || lx > s->pile.width()) continue;
     float h = s->pile.heightAt(lx);
@@ -445,10 +446,15 @@ void World::updateCursor(float dt) {
     if (col < static_cast<int>(s->exposed.size()) && !s->exposed[static_cast<size_t>(col)]) continue;
     float r = 18.f * scale;
     debrisTmp_.clear();
-    float frac = clampf(speed / 1500.f, 0.15f, 0.8f);
-    s->pile.removeRange(lx - r, lx + r, frac, 2.2f * scale * scale, std::min(12, budget), debrisTmp_);
-    budget -= static_cast<int>(debrisTmp_.size());
-    spawnDebris(*s, debrisTmp_, v * 0.35f + Vec2(0, -80.f * scale), 60.f * scale);
+    const bool fast = speed > 320.f * scale;
+    const float frac = fast ? clampf(speed / 1500.f, 0.20f, 0.8f) : 0.18f;
+    // Slow strokes: the snow is just pressed away (no particles, no bursts).
+    const int maxDebris = fast ? std::min(8, budget) : 0;
+    s->pile.removeRange(lx - r, lx + r, frac, 2.2f * scale * scale, maxDebris, debrisTmp_);
+    if (fast && !debrisTmp_.empty()) {
+      budget -= static_cast<int>(debrisTmp_.size());
+      spawnDebris(*s, debrisTmp_, v * 0.35f + Vec2(0, -80.f * scale), 60.f * scale);
+    }
   }
 }
 
@@ -538,8 +544,10 @@ void World::updateParticles(float dt) {
     p.vy = vy + p.breezeY;
     p.size = lerpf(s_.flakeMin, s_.flakeMax, p.r1) * L.size * scale;
     p.prevY = p.y;
-    p.x += vx * dt;
-    p.y += vy * dt;
+    // Move with the full velocity: the cursor draught (breezeX/Y) must actually
+    // push the flake, not just sit in the velocity field.
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
     if (p.kind == ParticleKind::Confetti) p.angle += p.spin * dt;
 
     if (p.kind == ParticleKind::Flake && s_.piles && p.layer >= 1) {

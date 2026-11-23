@@ -48,4 +48,43 @@ inline float SnowballRadius(float mass, float radius0) {
   return std::min(r, radius0 * kSnowballMaxRadiusFactor);
 }
 
+// ---- lifting and dropping a ball ------------------------------------------
+// The surface is a floor, not a rail: the ball may be lifted freely and only
+// cannot sink below the edge.
+constexpr float kBallEmbed = 1.5f;
+
+inline float BallFloorY(float surfaceTopY, float radius, float embed = kBallEmbed) {
+  return surfaceTopY - radius + embed;
+}
+
+// Smaller y = higher on screen. A ball above the edge keeps the wanted y; one
+// pushed into the surface is clamped onto it.
+inline float BallClampToFloor(float wantedY, float surfaceTopY, float radius, float embed = kBallEmbed) {
+  return std::min(wantedY, BallFloorY(surfaceTopY, radius, embed));
+}
+
+// Gravity fall for a released ball until it lands on the surface.
+inline void BallFallStep(float& y, float& vy, float surfaceTopY, float radius, float dt, float gravity = 2400.f,
+                         float embed = kBallEmbed) {
+  const float floorY = BallFloorY(surfaceTopY, radius, embed);
+  if (y >= floorY) {
+    y = floorY;
+    vy = 0.f;
+    return;
+  }
+  vy += gravity * dt;
+  y += vy * dt;
+  if (y >= floorY) {
+    y = floorY;
+    vy = 0.f;
+  }
+}
+
+// A released ball glues onto a host ball when it is above it and close enough
+// horizontally; the host must not be smaller (a big ball is the base).
+inline bool BallCanStack(float dropX, float dropY, float dropR, float hostX, float hostY, float hostR) {
+  return std::fabs(dropX - hostX) <= (dropR + hostR) * 0.60f && dropY <= hostY - hostR * 0.40f &&
+         dropR <= hostR * 1.30f;
+}
+
 }  // namespace snow
