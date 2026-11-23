@@ -54,7 +54,7 @@ struct EngineConfig {
   HWND keepAbove = nullptr;  // our settings window: overlays stay below it while it is topmost
 };
 
-enum class EngineCommand { ClearSnow, Santa, Train, Yeti, MonitorsChanged, ReassertTopmost };
+enum class EngineCommand { ClearSnow, ClearSnowballs, Santa, Train, Yeti, MonitorsChanged, ReassertTopmost };
 
 struct DecorLayoutItem {
   uint32_t id = 0;

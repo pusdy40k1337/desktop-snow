@@ -794,7 +794,8 @@ SimSettings Engine::Impl::MakeSimSettings() const {
   sim.fallSpeed = s.snow.fallSpeed;
   sim.sway = s.snow.sway;
   sim.pileMaxHeight = s.piles.maxHeight;
-  sim.taskbarMaxHeight = s.piles.taskbarMaxHeight;
+  // The "Pile height" slider drives both edges: windows and the taskbar.
+  sim.taskbarMaxHeight = s.piles.maxHeight;
   sim.growth = s.piles.growth;
   sim.cornerRadiusOverride = s.piles.cornerRadius;
   sim.scatter.speedOn = s.scatter.speedOn;
@@ -867,6 +868,14 @@ void Engine::Impl::PullShared() {
         spots.push_back({item.id, Vec2(item.baseX, item.baseY), World::MonitorIndexAt(monitors, item.baseX, item.baseY - 1)});
     switch (cmd) {
       case EngineCommand::ClearSnow: world.clearSnow(); break;
+      case EngineCommand::ClearSnowballs:
+        // Rolled snowballs (and any pending "three balls -> snowman" spawn).
+        balls.clear();
+        {
+          std::lock_guard<std::mutex> lock(mu);
+          spawns.clear();
+        }
+        break;
       case EngineCommand::Santa: actors.trigger(ActorKind::Santa, Now(), monitors, spots); break;
       case EngineCommand::Train: actors.trigger(ActorKind::Train, Now(), monitors, spots); break;
       case EngineCommand::Yeti: actors.trigger(ActorKind::Yeti, Now(), monitors, spots); break;

@@ -942,9 +942,8 @@ void DecorRenderer::DrawTrain(const DecorFrame& f, const TrainState& t) {
     p.line(l, baseY, r, baseY, Fade(Darken(c, 0.5f), 0.9f), 1.f * px);
   };
 
-  // A soft rail line, strictly above the surface: a thin strip that reached
-  // below groundY used to paint a dark bar across the taskbar icons.
-  p.line(-kTrainDesignLen - 24.f, -2.2f, 24.f, -2.2f, Hex(0x3A3F4A, 0.35f), 1.4f);
+  // No rail/shadow line under the wheels at all: any strip here read as a grey
+  // bar across the taskbar icons in real use.
 
   // Wagons: B (rear) then A (behind the engine).
   const float wagonW = 90.f;

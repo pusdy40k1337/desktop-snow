@@ -100,6 +100,8 @@ std::vector<SchemaItem> BuildItems() {
                       {{"santa", UiStr::BtnSanta}, {"train", UiStr::BtnTrain}, {"yeti", UiStr::BtnYeti}}));
   v.push_back(Buttons(ItemId::ClearDecorations, S::Decorations, UiStr::SettingClearDecor, UiStr::DescClearDecor,
                       {{"clear-decorations", UiStr::BtnClear}}));
+  v.push_back(Buttons(ItemId::ClearSnowmen, S::Decorations, UiStr::SettingClearSnowmen, UiStr::DescClearSnowmen,
+                      {{"clear-snowmen", UiStr::BtnClear}}));
   v.push_back(Buttons(ItemId::ClearSnow, S::Decorations, UiStr::SettingClearSnow, UiStr::DescClearSnow,
                       {{"clear-snow", UiStr::BtnClear}}));
   // Monitors

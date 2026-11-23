@@ -122,6 +122,8 @@ enum class UiStr : int {
   BtnYeti,
   SettingClearDecor,
   DescClearDecor,
+  SettingClearSnowmen,
+  DescClearSnowmen,
   SettingClearSnow,
   DescClearSnow,
   BtnClear,

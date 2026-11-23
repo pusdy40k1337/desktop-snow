@@ -84,3 +84,19 @@ TEST(colour_picker_swallows_near_misses_and_hits_swatches) {
   // Well outside: nothing.
   CHECK(!ColorPickerUiHit(cp, cp.bar.left - 30, cp.bar.top - 30, 6));
 }
+
+TEST(decor_clear_all_versus_snowmen_only) {
+  DecorState d;
+  d.trees.push_back(TreeDecor{});
+  d.snowmen.push_back(SnowmanDecor{});
+  d.free.push_back(FreeDecor{});
+  ClearSnowmenOnly(d);
+  CHECK(d.snowmen.empty());
+  CHECK(d.trees.size() == 1);
+  CHECK(d.free.size() == 1);
+  d.snowmen.push_back(SnowmanDecor{});
+  ClearAllDecorations(d);
+  CHECK(d.trees.empty());
+  CHECK(d.snowmen.empty());
+  CHECK(d.free.empty());
+}

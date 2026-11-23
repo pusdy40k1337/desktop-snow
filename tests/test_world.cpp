@@ -433,3 +433,26 @@ TEST(world_cursor_breeze_scales_with_the_setting) {
             "the slider scales the draught proportionally");
   CHECK_MSG(full.second <= 260.5f, "the draught is clamped, flakes never turn into bullets");
 }
+
+TEST(world_pile_height_slider_shrinks_live_snow) {
+  World w;
+  SimSettings set = Quiet();
+  set.initialDusting = 0.9f;
+  set.pileMaxHeight = 40.f;
+  w.configure(set);
+  w.setMonitors(OneMonitor());
+  std::vector<WindowInput> wins = {Win(1, RectI(400, 500, 1400, 900), 0)};
+  for (int i = 0; i < 30; ++i) w.update(i / 60.0, 1 / 60.f, wins);
+  const float tall = w.surface(1)->pile.peak();
+  CHECK(tall > 12.f);
+  // The user drags "Pile height" down to 10: what is already lying shrinks now.
+  set.pileMaxHeight = 10.f;
+  w.configure(set);
+  CHECK(w.surface(1)->pile.peak() <= 10.f + 1e-3f);
+  CHECK(w.surface(1)->pile.peak() < tall);
+  // And raising it again allows the drift to grow past the old low cap.
+  set.pileMaxHeight = 40.f;
+  w.configure(set);
+  for (int i = 0; i < 60; ++i) w.update(1.0 + i / 60.0, 1 / 60.f, wins);
+  CHECK(w.surface(1)->pile.peak() > 10.5f);
+}

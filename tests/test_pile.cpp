@@ -188,3 +188,26 @@ TEST(pile_visual_heights_ease_towards_the_target) {
   CHECK(small.size() == 3 && small[1] == 10.f);
   CHECK(!SmoothHeights(small, target, 0.2f));  // already settled
 }
+
+TEST(pile_height_slider_clamps_existing_snow) {
+  PileModel m;
+  PileParams p;
+  p.columnStep = 2.f;
+  p.maxHeight = 40.f;
+  m.reset(400.f, p);
+  for (int i = 0; i < 200; ++i) m.deposit(200.f, 20.f, nullptr);
+  CHECK(m.peak() > 20.f);
+  PileParams low = p;
+  low.maxHeight = 8.f;
+  const uint32_t before = m.version();
+  m.setParams(low);
+  CHECK(m.version() != before);
+  CHECK(m.peak() <= 8.f + 1e-3f);
+  // Raising the cap again does not restore what was cut, but allows growth.
+  PileParams high = p;
+  high.maxHeight = 40.f;
+  m.setParams(high);
+  CHECK(m.peak() <= 8.f + 1e-3f);
+  for (int i = 0; i < 100; ++i) m.deposit(200.f, 20.f, nullptr);
+  CHECK(m.peak() > 8.f);
+}

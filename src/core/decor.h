@@ -70,6 +70,19 @@ struct DecorState {
   uint32_t nextId = 1;
 };
 
+// "Remove all decorations": trees (with their ornaments), snowmen and the
+// free-standing pieces. Rolled snowballs live in the renderer and are cleared
+// separately.
+inline void ClearAllDecorations(DecorState& d) {
+  d.trees.clear();
+  d.snowmen.clear();
+  d.free.clear();
+}
+
+// "Remove snowmen": only snowmen (placed and rolled ones); trees and the other
+// decorations stay exactly where they are.
+inline void ClearSnowmenOnly(DecorState& d) { d.snowmen.clear(); }
+
 constexpr int kMaxTrees = 3;
 constexpr int kMaxSnowmen = 12;
 constexpr int kMaxFreeDecor = 24;

@@ -32,7 +32,7 @@ enum class ItemId : int {
   Effect, Intensity, FlakeSize, FallSpeed, Wind, Breeze, WindGusts, SnowColor, Sparkle, Piles, PileHeight, TaskbarPile,
   ShakeOff, CursorSweep, Melt, DayNight, ReducedMotion,
   // Decorations
-  DecorateNow, DecorCount, Theme, Santa, Train, TrainKnocks, Snowballs, Yeti, CallNow, ClearDecorations, ClearSnow,
+  DecorateNow, DecorCount, Theme, Santa, Train, TrainKnocks, Snowballs, Yeti, CallNow, ClearDecorations, ClearSnowmen, ClearSnow,
   // Monitors
   MonitorsInfo, MonitorList,
   // Performance

@@ -33,6 +33,12 @@ void PileModel::setParams(const PileParams& p) {
       h_[static_cast<size_t>(i)] = old[static_cast<size_t>(a)] * (1.f - t) + old[static_cast<size_t>(b)] * t;
     }
   }
+  // Lowering the "pile height" slider must shrink what is already lying on the
+  // windows/taskbar, not just future snowfall.
+  if (p_.maxHeight > 0.f) {
+    for (float& v : h_)
+      if (v > p_.maxHeight) v = p_.maxHeight;
+  }
   recap();
   ++version_;
 }

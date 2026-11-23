@@ -656,8 +656,17 @@ void App::SettingsAction(UiAction a) {
       break;
     case UiAction::ClearSnow: engine_.Command(EngineCommand::ClearSnow); break;
     case UiAction::ClearDecorations:
-      state_.decor.trees.clear();
-      state_.decor.snowmen.clear();
+      // Everything: trees with their ornaments, snowmen and free-standing
+      // decorations, plus every rolled snowball.
+      ClearAllDecorations(state_.decor);
+      engine_.Command(EngineCommand::ClearSnowballs);
+      PushDecor();
+      ScheduleSave();
+      break;
+    case UiAction::ClearSnowmen:
+      // Only snowmen (placed and rolled), trees and other decorations stay.
+      ClearSnowmenOnly(state_.decor);
+      engine_.Command(EngineCommand::ClearSnowballs);
       PushDecor();
       ScheduleSave();
       break;
