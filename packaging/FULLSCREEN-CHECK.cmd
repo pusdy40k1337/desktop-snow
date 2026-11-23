@@ -36,7 +36,7 @@ pause >nul
 :go
 if exist "%LOG%" del "%LOG%"
 echo Recording... Desktop Snow closes by itself after 90 seconds.
-start "" /wait "%~dp0DesktopSnow.exe" --diagnostics --debug --no-persist --quit-after 90 --log "%LOG%" %*
+start "" /wait "%~dp0DesktopSnow.exe" --diagnostics --no-persist --quit-after 90 --log "%LOG%" %*
 echo.
 if exist "%LOG%" (
   echo Done. Send this file back: "%LOG%"
