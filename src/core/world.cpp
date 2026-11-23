@@ -417,12 +417,16 @@ void World::updateCursor(float dt) {
       if (d2 > R2 || d2 < 1e-3f) continue;
       const float falloff = 1.f - std::sqrt(d2) / R;
       const float f = falloff * falloff * strength;
-      // A velocity kick per frame while the pointer is moving: strong enough to
-      // see the flakes part around the mouse, decaying within ~0.5 s.
-      const float bx = (v.x * 0.35f + dx * 2.2f - dy * 0.6f) * f;
-      const float by = (v.y * 0.35f + dy * 2.2f + dx * 0.6f) * f;
-      p.breezeX = clampf(p.breezeX + bx, -900.f, 900.f);
-      p.breezeY = clampf(p.breezeY + by, -700.f, 700.f);
+      // The user-facing amount scales the whole draught; 0 % means the mouse
+      // never touches the falling snow at all.
+      const float amount = s_.cursorBreeze;
+      if (amount <= 0.001f) continue;
+      // Gentle velocity kick per frame (about a third of the old force at
+      // 100 %), clamped so a flick can never shoot a flake off the screen.
+      const float bx = (v.x * 0.11f + dx * 0.70f - dy * 0.20f) * f * amount;
+      const float by = (v.y * 0.11f + dy * 0.70f + dx * 0.20f) * f * amount;
+      p.breezeX = clampf(p.breezeX + bx, -260.f, 260.f);
+      p.breezeY = clampf(p.breezeY + by, -220.f, 220.f);
     }
   }
   if (s_.reducedMotion) return;

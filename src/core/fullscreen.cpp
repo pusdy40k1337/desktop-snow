@@ -45,6 +45,30 @@ bool OrdinaryMaximised(const FsWindow& w, const FsMonitor& m, int tol) {
   return w.zoomed && w.captioned && Within(w.frame, m.work, tol);
 }
 
+// Share of the monitor's work area covered by the union of all candidate
+// windows, sampled on a 16x9 grid. Two windows snapped side by side cover the
+// desktop completely without either being "maximised".
+float WorkCoverage(const FsMonitor& m, const std::vector<FsWindow>& windows) {
+  constexpr int kGX = 16, kGY = 9;
+  if (m.work.width() <= 0 || m.work.height() <= 0) return 0.f;
+  int covered = 0;
+  for (int gy = 0; gy < kGY; ++gy) {
+    const long cy = m.work.top + (static_cast<long>(gy) * 2 + 1) * m.work.height() / (2 * kGY);
+    for (int gx = 0; gx < kGX; ++gx) {
+      const long cx = m.work.left + (static_cast<long>(gx) * 2 + 1) * m.work.width() / (2 * kGX);
+      for (const FsWindow& w : windows) {
+        if (cx >= w.frame.left && cx < w.frame.right && cy >= w.frame.top && cy < w.frame.bottom) {
+          ++covered;
+          break;
+        }
+      }
+    }
+  }
+  return static_cast<float>(covered) / static_cast<float>(kGX * kGY);
+}
+
+constexpr float kCollectiveCoverage = 0.90f;
+
 }  // namespace
 
 const char* PauseReasonName(PauseReason r) {
@@ -98,6 +122,13 @@ std::vector<PauseDecision> DecidePause(const std::vector<FsMonitor>& monitors, c
     }
     if (coverIdx >= 0) {
       out[i] = Decide(PauseReason::Fullscreen, "covers the monitor (any z-order)", coverIdx, options);
+      continue;
+    }
+    // Windows tiled or snapped side by side can hide the desktop completely
+    // without any single one being maximised: count their union and pause once
+    // it covers at least 90 % of the work area.
+    if (workIdx < 0 && WorkCoverage(m, windows) >= kCollectiveCoverage) {
+      out[i] = Decide(PauseReason::Maximized, "windows cover the work area (>=90%)", -1, options);
       continue;
     }
     // Same for the work area: a maximised browser stays paused when a small

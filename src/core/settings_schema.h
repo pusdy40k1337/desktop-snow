@@ -29,7 +29,7 @@ enum class ItemId : int {
   // General
   Enabled, Startup, Language, HotkeyToggle, HotkeyDecorate, PauseFullscreen, PauseMaximized, Battery,
   // Snow
-  Effect, Intensity, FlakeSize, FallSpeed, Wind, WindGusts, SnowColor, Sparkle, Piles, PileHeight, TaskbarPile,
+  Effect, Intensity, FlakeSize, FallSpeed, Wind, Breeze, WindGusts, SnowColor, Sparkle, Piles, PileHeight, TaskbarPile,
   ShakeOff, CursorSweep, Melt, DayNight, ReducedMotion,
   // Decorations
   DecorateNow, DecorCount, Theme, Santa, Train, TrainKnocks, Snowballs, Yeti, CallNow, ClearDecorations, ClearSnow,

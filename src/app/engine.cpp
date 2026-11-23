@@ -804,6 +804,7 @@ SimSettings Engine::Impl::MakeSimSettings() const {
   sim.inherit = s.scatter.inherit;
   sim.windGusts = s.extras.windGusts;
   sim.cursorSweep = s.extras.cursorSweep;
+  sim.cursorBreeze = std::clamp(s.breezePercent / 100.f, 0.f, 1.f);
   sim.melt = s.extras.melt;
   sim.sparkle = s.extras.sparkle;
   sim.reducedMotion = c.reducedMotion;

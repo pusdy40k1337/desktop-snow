@@ -71,6 +71,8 @@ enum class UiStr : int {
   SettingFallSpeed,
   SettingWind,
   DescWind,
+  SettingBreeze,
+  DescBreeze,
   SettingWindGusts,
   SettingColor,
   ColorWhite,

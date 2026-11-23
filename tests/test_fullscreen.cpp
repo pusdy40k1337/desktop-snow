@@ -173,14 +173,17 @@ TEST(pause_snapped_or_borderless_window_filling_the_work_area) {
   CHECK(d.pause && d.reason == PauseReason::Maximized);
 }
 
-TEST(pause_almost_the_work_area_alone_does_not_pause) {
+TEST(pause_window_almost_the_work_area_counts_as_covered) {
+  // A window that stops 10 px short still hides >= 90 % of the work area, so the
+  // collective rule pauses the monitor (a thin strip of desktop is not "snow on
+  // the desktop" any more).
   FsWindow almost = Fw(RectI(0, 0, 1920, 1030));  // 10 px short of the work area
   PauseDecision d = Decide1({almost});
-  CHECK(!d.pause);
-  CHECK(d.reason == PauseReason::None);
-  CHECK(std::string(d.rule) == "no covering window");
+  CHECK(d.pause);
+  CHECK(d.reason == PauseReason::Maximized);
+  CHECK(std::string(d.rule) == "windows cover the work area (>=90%)");
   FsWindow narrow = Fw(RectI(6, 0, 1920, 1040));  // 6 px short at the left edge
-  CHECK(!Decide1({narrow}).pause);
+  CHECK(Decide1({narrow}).pause);
   // A maximised window below a small one stays paused: the user is still
   // working inside the maximised app (Spotify over a maximised Chrome).
   FsWindow below = Fw(kW1);
@@ -435,4 +438,31 @@ TEST(settings_pause_fullscreen_roundtrip) {
   AppState defaults;
   FromJson(json::Value::object(), defaults);
   CHECK(defaults.settings.pauseFullscreen);
+}
+
+TEST(pause_snapped_windows_covering_the_work_area) {
+  // Windows Snap: two half-screen windows hide the whole desktop, yet neither
+  // has WS_MAXIMIZE. Their union must pause the monitor.
+  FsWindow left = Fw(RectI(0, 0, 960, 1040));
+  FsWindow right = Fw(RectI(960, 0, 1920, 1040));
+  PauseDecision d = Decide1({left, right});
+  CHECK(d.pause);
+  CHECK(d.reason == PauseReason::Maximized);
+  CHECK(std::string(d.rule) == "windows cover the work area (>=90%)");
+  // Three tiled windows behave the same.
+  FsWindow third = Fw(RectI(0, 0, 640, 1040));
+  FsWindow fourth = Fw(RectI(640, 0, 1280, 1040));
+  FsWindow fifth = Fw(RectI(1280, 0, 1920, 1040));
+  CHECK(Decide1({third, fourth, fifth}).pause);
+  // 80 % of the area is not enough: the desktop is still visible in a strip.
+  FsWindow a = Fw(RectI(0, 0, 768, 1040));
+  FsWindow b = Fw(RectI(768, 0, 1536, 1040));
+  PauseDecision visible = Decide1({a, b});
+  CHECK(!visible.pause);
+  CHECK(visible.reason == PauseReason::None);
+  // With the maximised pause switched off the coverage is still reported, but
+  // it does not hide the snow.
+  PauseOptions off;
+  off.maximized = false;
+  CHECK(!Decide1({left, right}, off).pause);
 }

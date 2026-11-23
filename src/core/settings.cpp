@@ -31,6 +31,7 @@ static std::string oneOf(const std::string& v, std::initializer_list<const char*
 
 void Sanitize(Settings& s) {
   s.intensity = clampInt(s.intensity, 25, 200);
+  s.breezePercent = clampInt(s.breezePercent, 0, 100);
   s.fpsCap = clampInt(s.fpsCap, 20, 240);
   s.language = oneOf(s.language, {"auto", "en", "ru", "uk"}, "auto");
   s.reducedMotion = oneOf(s.reducedMotion, {"auto", "on", "off"}, "auto");
@@ -166,6 +167,7 @@ Value ToJson(const AppState& st) {
   set.set("enabled", s.enabled);
   set.set("effect", s.effect);
   set.set("intensity", s.intensity);
+  set.set("breeze", s.breezePercent);
   set.set("theme", s.theme);
   set.set("fpsCap", s.fpsCap);
   set.set("language", s.language);
@@ -327,6 +329,7 @@ void FromJson(const Value& root, AppState& st) {
     rd(set, "enabled", s.enabled);
     rd(set, "effect", s.effect);
     rd(set, "intensity", s.intensity);
+    rd(set, "breeze", s.breezePercent);
     rd(set, "theme", s.theme);
     rd(set, "fpsCap", s.fpsCap);
     rd(set, "language", s.language);

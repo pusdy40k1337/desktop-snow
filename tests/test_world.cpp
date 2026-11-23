@@ -311,6 +311,7 @@ TEST(world_cursor_breeze_pushes_falling_flakes) {
   SimSettings set = Quiet();
   set.snowing = true;
   set.intensity = 1.f;
+  set.cursorBreeze = 1.f;  // slider at 100 %: the strongest allowed draught
   w.configure(set);
   w.setMonitors(OneMonitor());
   std::vector<WindowInput> none;
@@ -320,7 +321,7 @@ TEST(world_cursor_breeze_pushes_falling_flakes) {
   w.update(2.1, 1 / 60.f, none);
   int pushed = 0;
   for (const auto& p : w.particles())
-    if (p.kind == ParticleKind::Flake && std::fabs(p.vx) > 60.f) ++pushed;
+    if (p.kind == ParticleKind::Flake && std::fabs(p.vx) > 25.f) ++pushed;
   CHECK(pushed > 0);
 }
 
@@ -366,6 +367,7 @@ TEST(world_breeze_moves_flakes_not_just_their_velocity_field) {
   SimSettings set = Quiet();
   set.snowing = true;
   set.intensity = 1.f;
+  set.cursorBreeze = 1.f;
   World a, b;
   a.configure(set);
   b.configure(set);
@@ -390,4 +392,44 @@ TEST(world_breeze_moves_flakes_not_just_their_velocity_field) {
     if (pa[i].kind == ParticleKind::Flake && (std::fabs(pa[i].x - pb[i].x) > 0.5f || std::fabs(pa[i].y - pb[i].y) > 0.5f))
       moved = true;
   CHECK(moved);
+}
+
+TEST(world_cursor_breeze_scales_with_the_setting) {
+  // Measures the draught itself (Particle::breezeX) after a realistic mouse
+  // stroke: 15 px per frame (~900 px/s), not a teleport across the screen.
+  auto breeze = [](float amount) {
+    SimSettings set = Quiet();
+    set.snowing = true;
+    set.intensity = 1.f;
+    set.cursorBreeze = amount;
+    World w;
+    w.configure(set);
+    w.setMonitors(OneMonitor());
+    std::vector<WindowInput> none;
+    for (int i = 0; i < 120; ++i) w.update(i / 60.0, 1 / 60.f, none);
+    float x = 300.f;
+    for (int f = 0; f < 20; ++f) {
+      x += 15.f;
+      w.setCursor(Vec2(x, 300.f), true);
+      w.update(2.0 + f / 60.0, 1 / 60.f, none);
+    }
+    double sum = 0.0;
+    int n = 0;
+    float peak = 0.f;
+    for (const auto& p : w.particles()) {
+      if (p.kind != ParticleKind::Flake) continue;
+      sum += std::fabs(p.breezeX);
+      peak = std::max(peak, std::fabs(p.breezeX));
+      ++n;
+    }
+    return std::pair<double, float>{n > 0 ? sum / n : 0.0, peak};
+  };
+  const auto off = breeze(0.f);
+  const auto soft = breeze(0.30f);
+  const auto full = breeze(1.f);
+  CHECK(off.first == 0.0 && off.second == 0.f);  // 0 %: the mouse never touches snow
+  CHECK(soft.first > 0.0);
+  CHECK_MSG(full.first / soft.first >= 1.8 && full.first / soft.first <= 5.0,
+            "the slider scales the draught proportionally");
+  CHECK_MSG(full.second <= 260.5f, "the draught is clamped, flakes never turn into bullets");
 }

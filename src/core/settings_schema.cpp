@@ -64,6 +64,7 @@ std::vector<SchemaItem> BuildItems() {
   v.push_back(Slider(ItemId::FlakeSize, UiStr::SettingFlakeSize, kNoText, 2, 16, 0.5));
   v.push_back(Slider(ItemId::FallSpeed, UiStr::SettingFallSpeed, kNoText, 20, 300, 5));
   v.push_back(Slider(ItemId::Wind, UiStr::SettingWind, UiStr::DescWind, -50, 50, 1));
+  v.push_back(Slider(ItemId::Breeze, UiStr::SettingBreeze, UiStr::DescBreeze, 0, 100, 5));
   v.push_back(Make(ItemId::WindGusts, S::Snow, K::Toggle, UiStr::SettingWindGusts));
   v.push_back(Choice(ItemId::SnowColor, S::Snow, UiStr::SettingColor, kNoText,
                      {{"#ffffff", UiStr::ColorWhite},
@@ -243,6 +244,7 @@ double GetSlider(const Settings& s, ItemId id) {
   double v = 0;
   switch (id) {
     case ItemId::Intensity: v = s.intensity; break;
+    case ItemId::Breeze: v = s.breezePercent; break;
     case ItemId::FlakeSize: v = s.snow.flakeMax; break;
     case ItemId::FallSpeed: v = s.snow.fallSpeed; break;
     case ItemId::Wind: v = s.snow.windSpeed; break;
@@ -262,6 +264,7 @@ bool SetSlider(Settings& s, ItemId id, double v) {
   float f = static_cast<float>(v);
   switch (id) {
     case ItemId::Intensity: s.intensity = static_cast<int>(std::lround(v)); break;
+    case ItemId::Breeze: s.breezePercent = static_cast<int>(std::lround(v)); break;
     case ItemId::FlakeSize:
       s.snow.flakeMax = f;
       s.snow.flakeMin = FlakeMinFor(f);
@@ -335,6 +338,7 @@ bool SetHotkey(Settings& s, ItemId id, const std::string& text) {
 std::string FormatSliderValue(ItemId id, double v, Lang lang) {
   switch (id) {
     case ItemId::Intensity: return Num(v, lang) + " %";
+    case ItemId::Breeze: return Num(v, lang) + " %";
     case ItemId::FlakeSize:
     case ItemId::PileHeight: return Num(v, lang) + " " + UiTr(UiStr::UnitPx, lang);
     case ItemId::FallSpeed:

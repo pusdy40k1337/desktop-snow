@@ -60,6 +60,7 @@ struct Settings {
   bool enabled = true;
   std::string effect = "snow";
   int intensity = 100;       // percent, 25..200
+  int breezePercent = 30;    // cursor draught on flakes, 0..100 %
   std::string theme = "classic";
   int fpsCap = 60;           // 20..240
   std::string language = "auto";  // auto | en | ru | uk

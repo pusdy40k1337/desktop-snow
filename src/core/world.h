@@ -96,6 +96,7 @@ struct SimSettings {
   ScatterParams scatter;
   float inherit = 0.55f;
   bool windGusts = true, cursorSweep = true, melt = false, sparkle = true;
+  float cursorBreeze = 0.30f;  // 0..1, how strongly the mouse drifts the flakes
   bool reducedMotion = false;
   float initialDusting = 0.22f;  // fraction of cap given to windows present at start
   int maxParticles = 6000;
