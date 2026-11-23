@@ -82,6 +82,25 @@ struct SnowmanParts {
 
 SnowmanParts SnowmanProportions(const SnowmanDecor& sm);
 
+// Turns a tower of rolled balls into a complete snowman: the real radii and
+// tier count are kept, and it is dressed immediately (hat, scarf, face,
+// buttons, twig arms are drawn by the renderer for every snowman).
+inline SnowmanDecor MakeSnowmanFromBalls(uint32_t id, float scale, float relX, float fBottom, float fMiddle,
+                                         float fTop, int layers, int hatColor, int scarfColor) {
+  SnowmanDecor s;
+  s.id = id;
+  s.scale = scale > 0.05f ? scale : 1.f;
+  s.relX = relX;
+  s.rBottom = fBottom;
+  s.rMiddle = layers == 3 ? fMiddle : 0.f;
+  s.rTop = fTop;
+  s.layers = layers == 2 ? 2 : 3;
+  s.hat = 1;  // top hat with the colour band: never a bare white ball
+  s.hatColor = hatColor;
+  s.scarf = scarfColor;
+  return s;
+}
+
 struct DecorState {
   std::vector<TreeDecor> trees;
   std::vector<SnowmanDecor> snowmen;

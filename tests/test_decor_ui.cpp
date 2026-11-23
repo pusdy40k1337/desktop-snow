@@ -132,3 +132,23 @@ TEST(snowman_from_balls_keeps_its_radii) {
   CHECK_NEAR(c.cmY, -0.515, 1e-6);
   CHECK_NEAR(c.chY, -0.747, 1e-6);
 }
+
+TEST(tower_becomes_a_dressed_snowman_with_the_same_radii) {
+  const SnowmanDecor s = MakeSnowmanFromBalls(7, 1.3f, 0.42f, 0.26f, 0.15f, 0.09f, 3, 4, 2);
+  CHECK(s.id == 7);
+  CHECK(s.layers == 3);
+  // Every ball keeps the size the user rolled.
+  CHECK_NEAR(s.rBottom, 0.26, 1e-6);
+  CHECK_NEAR(s.rMiddle, 0.15, 1e-6);
+  CHECK_NEAR(s.rTop, 0.09, 1e-6);
+  // Never a bare ball: hat with a colour band and a scarf are always on.
+  CHECK(s.hat == 1);
+  CHECK(s.hatColor == 4);
+  CHECK(s.scarf == 2);
+  CHECK_NEAR(s.relX, 0.42, 1e-6);
+  // A two-tier tower stays two-tier and drops the middle radius.
+  const SnowmanDecor two = MakeSnowmanFromBalls(8, 1.f, 0.5f, 0.24f, 0.14f, 0.11f, 2, 1, 1);
+  CHECK(two.layers == 2);
+  CHECK(two.rMiddle == 0.f);
+  CHECK_NEAR(two.rTop, 0.11, 1e-6);
+}

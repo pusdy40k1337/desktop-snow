@@ -1,5 +1,7 @@
 #include "engine.h"
 
+#include <cstring>
+
 #include "../core/knock.h"
 #include "../core/snowball.h"
 
@@ -226,8 +228,7 @@ struct Engine::Impl {
     bool held = false;
     uint32_t atopOf = 0;  // ball id this one rests on (0 = on the edge)
     int stack = 0;        // how many balls rest on this one
-    bool pendingTier = false;  // two balls stacked: wait briefly for a third
-    double tierAt = 0;
+    int tierIndex = 0;    // 1 = middle ball, 2 = top ball of the tower
     double hitT0 = -1;    // train knock start time, < 0 = not hit
     int hitDir = 1;
   };
@@ -239,6 +240,10 @@ struct Engine::Impl {
   Vec2 BallPos(const Ball& b) const;
   void KnockBalls(double now, const TrainHitBox& hb);
   void SpawnSnowmanFromTower(Ball& base, double now);
+  bool TowerPressAt(POINT pt);
+  bool ForeignPopupAt(POINT pt) const;
+  uint32_t towerPressId = 0;
+  POINT towerPressPt{};
   HHOOK mouseHook = nullptr;
   static Impl* hookOwner;
   double ballLastNow = 0;
@@ -2089,6 +2094,10 @@ bool Engine::Impl::OnSnowballMouse(UINT msg, POINT pt) {
     return false;
   }
   if (msg == WM_LBUTTONDOWN) {
+    // Notifications and flyouts above the taskbar keep their clicks.
+    if (ForeignPopupAt(pt)) return false;
+    // Click on an already stacked tower: remember it and convert on release.
+    if (TowerPressAt(pt)) return true;
     // Pick a resting ball up again before grabbing fresh snow.
     if (Ball* picked = BallUnder(pt)) {
       if (picked->atopOf) {
@@ -2124,6 +2133,14 @@ bool Engine::Impl::OnSnowballMouse(UINT msg, POINT pt) {
     return true;
   }
   if (msg == WM_LBUTTONUP) {
+    if (towerPressId != 0) {
+      Ball* root = FindBall(towerPressId);
+      const float dx = static_cast<float>(pt.x - towerPressPt.x);
+      const float dy = static_cast<float>(pt.y - towerPressPt.y);
+      towerPressId = 0;
+      if (root && dx * dx + dy * dy < 16.f) SpawnSnowmanFromTower(*root, ballLastNow);
+      return true;
+    }
     Ball* held = nullptr;
     for (auto& b : balls)
       if (b.held) { held = &b; break; }
@@ -2141,29 +2158,11 @@ bool Engine::Impl::OnSnowballMouse(UINT msg, POINT pt) {
     if (host) {
       held->atopOf = host->id;
       held->localX = host->localX;
+      held->tierIndex = host->stack + 1;
       ++host->stack;
       if (host->stack >= 2) {
-        if (const Surface* s = world.surface(host->surface)) {
-          SnowballSnowmanSpawn sp;
-          sp.surface = host->surface;
-          sp.relX = s->pile.width() > 1.f ? std::clamp(host->localX / s->pile.width(), 0.f, 1.f) : 0.5f;
-          sp.scale = s->scale;
-          sp.taskbar = s->isTaskbar;
-          {
-            std::lock_guard<std::mutex> lock(mu);
-            spawns.push_back(sp);
-          }
-          if (notify) PostMessageW(notify, WM_APP_DECOR_UPDATE, 0, 0);
-          const uint32_t base = host->id;
-          uint32_t mid = 0, top = 0;
-          for (const auto& b : balls) {
-            if (b.atopOf == base) { if (mid == 0) mid = b.id; else top = b.id; }
-          }
-          balls.erase(std::remove_if(balls.begin(), balls.end(), [&](const Ball& b) {
-                        return b.id == base || b.id == mid || b.id == top;
-                      }),
-                      balls.end());
-        }
+        // Third ball on top: the tower is complete, dress the snowman now.
+        SpawnSnowmanFromTower(*host, ballLastNow);
       }
     } else {
       held->falling = true;
@@ -2172,6 +2171,77 @@ bool Engine::Impl::OnSnowballMouse(UINT msg, POINT pt) {
     return true;
   }
   return false;
+}
+
+void Engine::Impl::SpawnSnowmanFromTower(Ball& base, double now) {
+  (void)now;
+  const Surface* s = world.surface(base.surface);
+  if (!s) return;
+  float midR = 0.f, topR = 0.f;
+  uint32_t midId = 0, topId = 0;
+  for (const auto& b : balls) {
+    if (b.atopOf != base.id) continue;
+    if (b.tierIndex == 1) {
+      midR = b.radius;
+      midId = b.id;
+    } else if (b.tierIndex == 2) {
+      topR = b.radius;
+      topId = b.id;
+    }
+  }
+  const int layers = topId != 0 ? 3 : 2;
+  const float H = std::max(8.f, 5.f * base.radius);  // classic bottom = 0.2 * height
+  SnowballSnowmanSpawn sp;
+  sp.surface = base.surface;
+  sp.relX = s->pile.width() > 1.f ? std::clamp(base.localX / s->pile.width(), 0.f, 1.f) : 0.5f;
+  sp.scale = H / (92.f * std::max(0.1f, s->scale));
+  sp.taskbar = s->isTaskbar;
+  sp.layers = layers;
+  sp.fBottom = base.radius / H;
+  sp.fMiddle = layers == 3 ? midR / H : 0.f;
+  sp.fTop = (layers == 3 ? topR : midR) / H;
+  {
+    std::lock_guard<std::mutex> lock(mu);
+    spawns.push_back(sp);
+  }
+  if (notify) PostMessageW(notify, WM_APP_DECOR_UPDATE, 0, 0);
+  const uint32_t bId = base.id, mId = midId, tId = topId;
+  balls.erase(std::remove_if(balls.begin(), balls.end(),
+                             [&](const Ball& b) { return b.id == bId || b.id == mId || b.id == tId; }),
+              balls.end());
+}
+
+bool Engine::Impl::ForeignPopupAt(POINT pt) const {
+  HWND h = WindowFromPoint(pt);
+  if (!h) return false;
+  HWND root = GetAncestor(h, GA_ROOT);
+  if (!root) root = h;
+  DWORD pid = 0;
+  GetWindowThreadProcessId(root, &pid);
+  char cls[128] = {};
+  GetClassNameA(root, cls, 128);
+  const bool shellSurface = std::strcmp(cls, "Shell_TrayWnd") == 0 ||
+                            std::strcmp(cls, "Shell_SecondaryTrayWnd") == 0 ||
+                            std::strcmp(cls, "Progman") == 0 || std::strcmp(cls, "WorkerW") == 0;
+  const LONG ex = GetWindowLongW(root, GWL_EXSTYLE);
+  const LONG st = GetWindowLongW(root, GWL_STYLE);
+  const bool popupOrTool =
+      (ex & WS_EX_TOPMOST) != 0 || (ex & WS_EX_TOOLWINDOW) != 0 || (st & WS_POPUP) != 0;
+  return SnowballPressBelongsToPopup(true, pid == GetCurrentProcessId(), shellSurface, popupOrTool);
+}
+
+bool Engine::Impl::TowerPressAt(POINT pt) {
+  Ball* b = BallUnder(pt);
+  if (!b) return false;
+  while (b->atopOf) {
+    Ball* parent = FindBall(b->atopOf);
+    if (!parent) break;
+    b = parent;
+  }
+  if (b->stack < 1) return false;  // a single ball is not a tower yet
+  towerPressId = b->id;
+  towerPressPt = pt;
+  return true;
 }
 
 void Engine::Impl::UpdateSnowball(double now, float dt) {

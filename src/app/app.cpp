@@ -1462,16 +1462,12 @@ LRESULT App::Handle(HWND h, UINT m, WPARAM w, LPARAM l) {
       engine_.TakeSnowballSpawns(ballSpawns);
       for (const auto& sp : ballSpawns) {
         if (static_cast<int>(state_.decor.snowmen.size()) >= kMaxSnowmen) break;
-        SnowmanDecor s;
-        s.id = state_.decor.nextId++;
+        const int color = state_.settings.decorColor >= 0 ? state_.settings.decorColor % kDecorColorCount : 0;
+        SnowmanDecor s = MakeSnowmanFromBalls(state_.decor.nextId++, sp.scale, clampf(sp.relX, 0.05f, 0.95f),
+                                              sp.fBottom, sp.fMiddle, sp.fTop, sp.layers, color, color);
         s.free = false;
         s.anchor.taskbar = sp.taskbar;
         s.anchor.hwnd = sp.surface;
-        s.relX = clampf(sp.relX, 0.05f, 0.95f);
-        s.scale = 1.f;
-        s.hat = 1;
-        s.hatColor = state_.settings.decorColor >= 0 ? state_.settings.decorColor % kDecorColorCount : 0;
-        s.scarf = state_.settings.decorColor >= 0 ? state_.settings.decorColor % kDecorColorCount : 0;
         state_.decor.snowmen.push_back(s);
         changed = true;
       }

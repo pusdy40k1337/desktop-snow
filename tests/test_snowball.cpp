@@ -103,3 +103,11 @@ TEST(snowball_stacks_only_on_a_bigger_ball_below_it) {
   // A bigger ball dropped on a smaller one does not use it as a base.
   CHECK(!BallCanStack(500.f, 900.f, 30.f, 505.f, 985.f, 12.f));
 }
+
+TEST(notification_clicks_are_never_eaten_by_snowball_sculpting) {
+  CHECK(SnowballPressBelongsToPopup(true, false, false, true));
+  CHECK(!SnowballPressBelongsToPopup(true, false, true, true));
+  CHECK(!SnowballPressBelongsToPopup(true, true, false, true));
+  CHECK(!SnowballPressBelongsToPopup(true, false, false, false));
+  CHECK(!SnowballPressBelongsToPopup(false, false, false, false));
+}

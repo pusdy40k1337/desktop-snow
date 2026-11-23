@@ -16,6 +16,14 @@ constexpr float kSnowballMinHeight = 4.f;
 constexpr float kSnowballReachBase = 8.f;
 constexpr float kSnowballReachPerHeight = 0.9f;
 
+// A press over a drift must reach a notification/toast/popup that floats over
+// the taskbar instead of being eaten by snowball sculpting: only foreign popup
+// windows take the click, never the taskbar, the desktop or our own overlay.
+inline bool SnowballPressBelongsToPopup(bool windowFound, bool sameProcess, bool shellSurface,
+                                        bool popupOrTool) {
+  return windowFound && !sameProcess && !shellSurface && popupOrTool;
+}
+
 // Distance from the pile surface (positive = above it) at which a press still
 // catches the snow. Grows with the local height, so a tall pile reaches further.
 inline float SnowballReach(float pileHeight, float dpiScale) {
