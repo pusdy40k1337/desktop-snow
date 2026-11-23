@@ -108,12 +108,11 @@ std::vector<PauseDecision> DecidePause(const std::vector<FsMonitor>& monitors, c
       continue;
     }
     if (topIdx >= 0) {
-      const FsWindow& w = windows[static_cast<size_t>(topIdx)];
-      if (w.topmost || w.floating) {
-        out[i] = Decide(PauseReason::None, "no window", topIdx, options);
-        continue;
-      }
-      out[i] = Decide(PauseReason::None, "top window does not cover", topIdx, options);
+      // Nothing on this monitor fills the screen or the work area: the user is
+      // working in a normal window, so the snow may fall. There is no "top
+      // window does not cover" rule any more - a small window can never cancel
+      // the pause of a fullscreen/maximised window underneath it.
+      out[i] = Decide(PauseReason::None, "no covering window", topIdx, options);
       continue;
     }
     out[i] = Decide(PauseReason::None, "no window", -1, options);

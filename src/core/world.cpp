@@ -401,15 +401,15 @@ void World::updateCursor(float dt) {
   }
   Vec2 v = (cursor_ - cursorPrev_) * (1.f / dt);
   cursorVel_ = v;
-  if (s_.reducedMotion) return;
   const float speed = v.length();
 
-  // A fast cursor is a soft breeze for the falling flakes: they drift away from
-  // the pointer instead of passing straight through it.
-  if (speed > 180.f && !particles_.empty()) {
-    const float R = 170.f;
+  // A fast cursor is a breeze for the falling flakes: they drift away from the
+  // pointer instead of passing straight through it. Works even with reduced
+  // motion (weaker), because the user explicitly expects the reaction.
+  if (speed > 60.f && !particles_.empty()) {
+    const float R = 115.f;
     const float R2 = R * R;
-    const float strength = std::min(1.f, (speed - 180.f) / 1400.f);
+    const float strength = std::min(1.f, (speed - 60.f) / 900.f) * (s_.reducedMotion ? 0.45f : 1.f);
     for (auto& p : particles_) {
       if (p.kind != ParticleKind::Flake) continue;
       const float dx = p.x - cursor_.x, dy = p.y - cursor_.y;
@@ -417,16 +417,17 @@ void World::updateCursor(float dt) {
       if (d2 > R2 || d2 < 1e-3f) continue;
       const float falloff = 1.f - std::sqrt(d2) / R;
       const float f = falloff * falloff * strength;
-      // Push along the stroke plus a little sideways swirl.
-      p.breezeX += (v.x * 0.22f + dx * 1.6f - dy * 0.5f) * f * dt;
-      p.breezeY += (v.y * 0.10f + dy * 1.6f + dx * 0.5f) * f * dt;
+      // Push along the stroke plus a radial swirl away from the pointer.
+      p.breezeX += (v.x * 0.55f + dx * 3.2f - dy * 0.8f) * f * dt;
+      p.breezeY += (v.y * 0.30f + dy * 3.2f + dx * 0.8f) * f * dt;
     }
   }
+  if (s_.reducedMotion) return;
 
   if (!s_.cursorSweep) return;
   // Sweeping a thick drift must stay smooth: cap the debris spawned per frame
   // instead of turning the whole carved slab into particles at once.
-  int budget = 24;
+  int budget = 12;
   for (Surface* s : active_) {
     if (budget <= 0) break;
     float scale = s->scale;

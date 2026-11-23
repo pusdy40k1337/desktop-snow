@@ -178,7 +178,7 @@ TEST(pause_almost_the_work_area_alone_does_not_pause) {
   PauseDecision d = Decide1({almost});
   CHECK(!d.pause);
   CHECK(d.reason == PauseReason::None);
-  CHECK(std::string(d.rule) == "top window does not cover");
+  CHECK(std::string(d.rule) == "no covering window");
   FsWindow narrow = Fw(RectI(6, 0, 1920, 1040));  // 6 px short at the left edge
   CHECK(!Decide1({narrow}).pause);
   // A maximised window below a small one stays paused: the user is still

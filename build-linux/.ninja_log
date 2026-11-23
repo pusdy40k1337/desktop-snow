@@ -48,3 +48,9 @@
 2	6541	1795442180864692782	CMakeFiles/snow_tests.dir/tests/test_fullscreen.cpp.o	5019029e394bd343
 4654	7342	1795442181664699838	CMakeFiles/snow_tests.dir/tests/test_world.cpp.o	c74717519c6b781d
 7342	7440	1795442181762700702	bin/snow_tests	c92354b7aedc229c
+0	11	0	/home/ubuntu/projects/desktop-snow/build-linux/CMakeFiles/cmake.verify_globs	bf1ee6cc80fd65c8
+1	3069	1795445541088495128	CMakeFiles/snowcore.dir/src/core/fullscreen.cpp.o	a5e6ab511c0b87cc
+1	4427	1795445542448507234	CMakeFiles/snowcore.dir/src/core/world.cpp.o	b7e924b0794e99c7
+4428	4457	1795445542478507501	libsnowcore.a	6bad95a04d9daceb
+2	5248	1795445543268514533	CMakeFiles/snow_tests.dir/tests/test_fullscreen.cpp.o	5019029e394bd343
+5248	5349	1795445543369515432	bin/snow_tests	c92354b7aedc229c

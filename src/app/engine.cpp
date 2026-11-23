@@ -1584,9 +1584,11 @@ bool Engine::Impl::DrawDebug(const Overlay& ov, const FrameTiming& ft) {
     if (!w.rect.intersects(ov.rect)) continue;
     bool isHot = false;
     for (const auto& h : hot) isHot = isHot || h.hwnd == inputSrc[i]->hwnd;
-    D2D1_COLOR_F col = isHot ? D2D1::ColorF(1.f, 0.85f, 0.f, 1.f)
-                             : (w.holdsSnow || w.isTaskbar ? D2D1::ColorF(0.2f, 1.f, 0.4f, 0.9f)
-                                                           : D2D1::ColorF(0.6f, 0.6f, 0.6f, 0.6f));
+    // Only the windows that are actively tracked get an outline: the old green
+    // "this window can hold snow" lines along the taskbar looked like a bug in
+    // normal use and are gone.
+    if (!isHot) continue;
+    D2D1_COLOR_F col = D2D1::ColorF(1.f, 0.85f, 0.f, 1.f);
     float L = static_cast<float>(w.rect.left), T = static_cast<float>(w.rect.top);
     float R = static_cast<float>(w.rect.right), B = static_cast<float>(w.rect.bottom);
     ID2D1SolidColorBrush* br = brush(col);
@@ -1773,30 +1775,63 @@ bool Engine::Impl::RenderOverlay(Overlay& ov, const FrameTiming& ft) {
       KnockBalls(now, hb);  // snowballs on the rails fly too
     }
     auto drawSnowmenOn = [&](uint64_t surfaceId) {
+      auto decColor = [](int idx) {
+        const uint32_t v = DecorColorRgb(idx);
+        return D2D1::ColorF(((v >> 16) & 0xFF) / 255.f, ((v >> 8) & 0xFF) / 255.f, (v & 0xFF) / 255.f, 1.f);
+      };
       for (const auto& dr : snowmenDraw) {
         if (dr.surfaceId != surfaceId) continue;
-        float kx = 0, ky = 0, krot = 0;
         auto kit = knockedAt.find(dr.sm->id);
+        bool flying = false;
+        double kt = 0;
         if (kit != knockedAt.end()) {
-          const KnockPose kp = KnockAt(now - kit->second.t0, kit->second.dir, kit->second.seed);
-          // The marker stays until the train leaves, otherwise the next
-          // overlay/frame would start the tumble again and again.
-          if (!kp.done) {
-            kx = kp.dx;
-            ky = kp.dy;
-            krot = kp.rot;
-          }
+          kt = now - kit->second.t0;
+          flying = !KnockAt(kt, kit->second.dir, kit->second.seed).done;
         }
         SnowmanBox b = SnowmanBounds(dr.base, dr.height);
-        RectI box(static_cast<int>(b.left) - 20, static_cast<int>(b.top) - 20, static_cast<int>(b.right) + 20,
+        RectI box(static_cast<int>(b.left) - 40, static_cast<int>(b.top) - 40, static_cast<int>(b.right) + 40,
                   static_cast<int>(b.bottom) + 20);
         if (!box.intersects(ov.rect)) continue;
-        const Vec2 base(dr.base.x + kx, dr.base.y + ky);
+        if (flying) {
+          // A real hit: the snowman bursts into three snowballs (and its hat
+          // and scarf), each with its own impulse, spin and gravity, then the
+          // parts settle back into a snowman on the same spot.
+          const float h = dr.height;
+          struct Part {
+            float up, r;
+            uint32_t i;
+          };
+          const Part ps[3] = {{0.26f * h, 0.30f * h, 0}, {0.60f * h, 0.22f * h, 1}, {0.84f * h, 0.16f * h, 2}};
+          for (const auto& pp : ps) {
+            const KnockPose kp =
+                KnockAt(kt * (1.0 + 0.10 * pp.i), kit->second.dir, kit->second.seed + 31u * (pp.i + 1u));
+            const float ox = kp.dx + static_cast<float>(kit->second.dir) * static_cast<float>(pp.i) * 16.f;
+            const Vec2 c(dr.base.x + ox, dr.base.y - pp.up + kp.dy);
+            decorR.DrawSnowball(f, D2D1::Point2F(c.x, c.y), pp.r, kp.rot);
+          }
+          const KnockPose topKp = KnockAt(kt * 1.20, kit->second.dir, kit->second.seed + 93u);
+          const Vec2 topC(dr.base.x + topKp.dx + static_cast<float>(kit->second.dir) * 32.f,
+                          dr.base.y - 0.84f * h + topKp.dy);
+          if (dr.sm->hat != 0)
+            dc->FillRoundedRectangle(
+                D2D1::RoundedRect(D2D1::RectF(topC.x - 0.10f * h, topC.y - 0.44f * h, topC.x + 0.10f * h,
+                                              topC.y - 0.26f * h),
+                                  2.f, 2.f),
+                brush(decColor(dr.sm->hatColor)));
+          if (dr.sm->scarf != 0)
+            dc->FillRoundedRectangle(
+                D2D1::RoundedRect(D2D1::RectF(topC.x - 0.11f * h, topC.y - 0.02f * h, topC.x + 0.11f * h,
+                                              topC.y + 0.05f * h),
+                                  2.f, 2.f),
+                brush(decColor(dr.sm->scarf)));
+          content = true;
+          continue;
+        }
         if (sprites.snowman)
-          DrawSprite(sprites.snowman.Get(), base.x, base.y, dr.height * easeOutCubic(dr.build), false,
-                     dr.wobble + krot, 1.f);
+          DrawSprite(sprites.snowman.Get(), dr.base.x, dr.base.y, dr.height * easeOutCubic(dr.build), false,
+                     dr.wobble, 1.f);
         else
-          decorR.DrawSnowman(f, *dr.sm, D2D1::Point2F(base.x, base.y), dr.height, dr.build, dr.wobble + krot,
+          decorR.DrawSnowman(f, *dr.sm, D2D1::Point2F(dr.base.x, dr.base.y), dr.height, dr.build, dr.wobble,
                              c.decorateMode && c.hoverId == dr.sm->id);
         content = true;
       }
@@ -1985,9 +2020,10 @@ Vec2 Engine::Impl::BallPos(const Ball& b) const {
       return Vec2(pp.x, pp.y - p->radius * 0.92f - b.radius * 0.92f);
     }
   }
-  float y = static_cast<float>(s->rect.top) - b.radius * 0.55f;  // rests on the sill
-  if (b.held) y = static_cast<float>(s->rect.top) - s->pile.heightAt(lx) - b.radius * 0.35f;
-  return Vec2(static_cast<float>(s->rect.left) + lx, y);
+  // The bottom of the ball is pinned to the edge (1.5 px of bite), so a growing
+  // ball rolls ON TOP of the taskbar/window instead of sinking through it.
+  const float edgeY = static_cast<float>(s->rect.top);
+  return Vec2(static_cast<float>(s->rect.left) + lx, edgeY - b.radius + 1.5f * s->scale);
 }
 
 Engine::Impl::Ball* Engine::Impl::BallUnder(POINT pt) {

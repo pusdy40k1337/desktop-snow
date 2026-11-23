@@ -80,7 +80,10 @@ void App::LoadState() {
   if (r.corruptFileQuarantined) Balloon(T(Str::TipStateRecovered));
   // The registry is the source of truth for autostart (users can remove it in Task Manager).
   state_.settings.launchAtStartup = AutostartEnabled();
+  // The debug layer is opt-in only: a persisted debugOverlay flag is ignored
+  // unless this run was started with --debug (TEST.cmd/harness pass it).
   if (opts_.debug) state_.settings.debugOverlay = true;
+  else state_.settings.debugOverlay = false;
 }
 
 void App::ScheduleSave() {
@@ -296,7 +299,16 @@ void App::CheckFullscreen(bool immediate) {
   std::sort(raw.begin(), raw.end());
 
   bool changed;
-  if (immediate) {
+  // Hiding must feel instant: the moment a monitor becomes paused, apply the
+  // new set in this very frame (no debounce, no fade). Only resuming waits for
+  // the debounce so alt-tabbing does not make the snow flicker.
+  bool newlyPaused = false;
+  {
+    const std::vector<std::string>& applied = fsDebounce_.applied();
+    for (const auto& id : raw)
+      if (std::find(applied.begin(), applied.end(), id) == applied.end()) newlyPaused = true;
+  }
+  if (immediate || newlyPaused) {
     changed = raw != fsDebounce_.applied();
     fsDebounce_.reset(raw);
   } else {
@@ -1188,6 +1200,39 @@ LRESULT App::HandleCatcher(HWND h, UINT m, WPARAM w, LPARAM l) {
         if (overUi(pl, hint) && !PaletteUiHit(pl, pt.x, pt.y, 8)) {
           swallowUp_ = true;  // the hint plate swallows clicks too
           return 0;
+        }
+        // Hat/scarf tool: a click on an existing snowman (its hat sits a little
+        // above the body box) or on an already placed free hat/scarf selects it
+        // and opens the colour popup again - never spawns a duplicate.
+        if (tool_ == Tool::Hat || tool_ == Tool::Scarf) {
+          const FreeKind wantKind = tool_ == Tool::Hat ? FreeKind::Hat : FreeKind::Scarf;
+          std::vector<DecorLayoutItem> lay;
+          engine_.GetDecorLayout(lay);
+          for (const auto& it : lay) {
+            if (!it.visible || it.cls != 1) continue;
+            if (pt.x < it.left - 8 || pt.x > it.right + 8) continue;
+            if (pt.y < it.top - 0.34f * it.height || pt.y > it.bottom + 4) continue;
+            for (auto& s : state_.decor.snowmen) {
+              if (s.id != it.id) continue;
+              hoverId_ = s.id;
+              OpenColorPicker(tool_ == Tool::Hat ? 1 : 2, s.id, 0, pt,
+                              tool_ == Tool::Hat ? s.hatColor : s.scarf);
+              PushDecor();
+              PushConfig();
+              swallowUp_ = true;
+              return 0;
+            }
+          }
+          for (const auto& it : lay) {
+            if (!it.visible || it.cls != 2) continue;
+            if (pt.x < it.left - 8 || pt.x > it.right + 8 || pt.y < it.top - 8 || pt.y > it.bottom + 8) continue;
+            for (auto& f : state_.decor.free) {
+              if (f.id != it.id || f.kind != wantKind) continue;
+              OpenColorPicker(3, 0, f.id, pt, f.color);
+              swallowUp_ = true;
+              return 0;
+            }
+          }
         }
         std::vector<DecorLayoutItem> layout;
         bool isTree = false;
