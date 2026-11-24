@@ -52,22 +52,40 @@ struct PauseDecision {
 // taskbars, shell popups (Alt+Tab, Start), click-through overlays and our own
 // overlay windows. Returns one decision per monitor.
 //
-// Per monitor, the first window on it decides:
-//  - it covers the whole monitor -> Fullscreen (a maximised window with a title
-//    bar that stays inside the work area is Maximized instead: it only reaches
-//    the monitor edges when the monitor has no taskbar);
-//  - it covers the whole work area (maximised, snapped full size, borderless
-//    maximised) -> Maximized;
-//  - always-on-top and floating windows that cover neither (picture-in-picture,
-//    player controls) are looked through;
-//  - any other window on top -> None: the user is working there.
-// A window that fills the monitor *below* the top one keeps Fullscreen: opening
-// WinRAR or a file dialog over a fullscreen Chrome/video must not resume the
-// snow (rule "covers the monitor (under the top window)").
+// Per monitor the whole z-order is inspected, not just the top window:
+//  - any window that covers the monitor -> Fullscreen (a maximised window with
+//    a title bar that stays inside the work area is Maximized instead: it only
+//    reaches the monitor edges when the monitor has no taskbar);
+//  - otherwise any window that covers the whole work area (maximised, snapped
+//    full size, borderless maximised) -> Maximized;
+//  - otherwise the top window decides: always-on-top and floating windows that
+//    cover neither are looked through, any other window means None (the user is
+//    working there).
+// A fullscreen or maximised window *below* the top one keeps its pause: opening
+// WinRAR, a file dialog or Spotify over a fullscreen Chrome/video, or a small
+// window over a maximised browser, must not resume the snow (rules
+// "covers the monitor (any z-order)" and "maximized (zoomed)").
 // The shell's presentation mode pauses every monitor; exclusive-mode D3D pauses
 // the foreground window's monitor (all of them when that is unknown).
 std::vector<PauseDecision> DecidePause(const std::vector<FsMonitor>& monitors, const std::vector<FsWindow>& windows,
                                        ShellNotifyState shell, const PauseOptions& options);
+
+// Shell windows that float over the desktop (taskbar thumbnails, Task View,
+// the overflow flyout). They must never host snow, clip the taskbar drift or
+// influence the pause decision.
+inline bool IsShellOverlayWindowClass(const std::string& cls) {
+  return cls == "TaskListThumbnailWnd" || cls == "MultitaskingViewFrame" ||
+         cls == "XamlExplorerHostIslandWindow" || cls == "NotifyIconOverflowWindow" ||
+         cls == "Windows.UI.Core.CoreWindow";
+}
+
+// A window that is in (or is starting) the maximise animation counts as
+// maximised from the first frame: GetWindowPlacement reports SW_SHOWMAXIMIZED
+// (3) or WPF_RESTORETOMAXIMIZED (0x0002) while IsZoomed may still be false
+// during the Windows animation.
+inline bool PlacementSaysMaximized(int showCmd, unsigned flags) {
+  return showCmd == 3 || (flags & 0x0002u) != 0;
+}
 
 // Fullscreen only (maximised windows ignored): one flag per monitor.
 std::vector<bool> DetectFullscreen(const std::vector<FsMonitor>& monitors, const std::vector<FsWindow>& windows,

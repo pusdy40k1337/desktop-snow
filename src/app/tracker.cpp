@@ -37,6 +37,9 @@ bool WindowTracker::Describe(HWND hwnd, TrackedWindow& out, bool withText) {
   std::string cls = WindowClass(hwnd);
   bool taskbar = cls == "Shell_TrayWnd" || cls == "Shell_SecondaryTrayWnd";
   if (!taskbar && IsShellPopupClass(cls)) return false;
+  // Floating tool windows without a title (shell previews, helper popups) must
+  // never host snow: hovering taskbar icons used to tear the taskbar drift.
+  if (!taskbar && (ex & WS_EX_TOOLWINDOW) && (style & WS_CAPTION) != WS_CAPTION) return false;
   if (!taskbar && (ex & WS_EX_TRANSPARENT) && (ex & WS_EX_LAYERED)) return false;  // click-through overlays
   if (ex & WS_EX_LAYERED) {
     BYTE alpha = 255;

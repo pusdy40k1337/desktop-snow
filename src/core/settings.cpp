@@ -31,6 +31,7 @@ static std::string oneOf(const std::string& v, std::initializer_list<const char*
 
 void Sanitize(Settings& s) {
   s.intensity = clampInt(s.intensity, 25, 200);
+  s.breezePercent = clampInt(s.breezePercent, 0, 100);
   s.fpsCap = clampInt(s.fpsCap, 20, 240);
   s.language = oneOf(s.language, {"auto", "en", "ru", "uk"}, "auto");
   s.reducedMotion = oneOf(s.reducedMotion, {"auto", "on", "off"}, "auto");
@@ -40,6 +41,10 @@ void Sanitize(Settings& s) {
   if (!themeOk) s.theme = "classic";
   if (s.hotkeyToggle.size() > 40) s.hotkeyToggle = "Ctrl+Alt+S";
   if (s.hotkeyDecorate.size() > 40) s.hotkeyDecorate = "Ctrl+Alt+D";
+  if (s.decorColor < 0) s.decorColor = -1;
+  else s.decorColor = std::clamp(s.decorColor, 0, 63);
+  s.paletteLeft = std::clamp(s.paletteLeft, -20000, 20000);
+  s.paletteTop = std::clamp(s.paletteTop, -20000, 20000);
   {
     std::vector<std::string> mons;
     for (const auto& id : s.disabledMonitors)
@@ -162,6 +167,7 @@ Value ToJson(const AppState& st) {
   set.set("enabled", s.enabled);
   set.set("effect", s.effect);
   set.set("intensity", s.intensity);
+  set.set("breeze", s.breezePercent);
   set.set("theme", s.theme);
   set.set("fpsCap", s.fpsCap);
   set.set("language", s.language);
@@ -179,6 +185,9 @@ Value ToJson(const AppState& st) {
   }
   set.set("hotkeyToggle", s.hotkeyToggle);
   set.set("hotkeyDecorate", s.hotkeyDecorate);
+  set.set("decorColor", s.decorColor);
+  set.set("paletteLeft", s.paletteLeft);
+  set.set("paletteTop", s.paletteTop);
 
   Value snow = Value::object();
   snow.set("density", s.snow.density);
@@ -224,6 +233,8 @@ Value ToJson(const AppState& st) {
   ex.set("dayNightTint", s.extras.dayNightTint);
   ex.set("santa", s.extras.santa);
   ex.set("train", s.extras.train);
+  ex.set("trainKnocks", s.extras.trainKnocksSnowmen);
+  ex.set("snowballs", s.extras.snowballs);
   ex.set("yeti", s.extras.yeti);
   set.set("extras", ex);
   root.set("settings", set);
@@ -318,6 +329,7 @@ void FromJson(const Value& root, AppState& st) {
     rd(set, "enabled", s.enabled);
     rd(set, "effect", s.effect);
     rd(set, "intensity", s.intensity);
+    rd(set, "breeze", s.breezePercent);
     rd(set, "theme", s.theme);
     rd(set, "fpsCap", s.fpsCap);
     rd(set, "language", s.language);
@@ -336,6 +348,9 @@ void FromJson(const Value& root, AppState& st) {
     }
     rd(set, "hotkeyToggle", s.hotkeyToggle);
     rd(set, "hotkeyDecorate", s.hotkeyDecorate);
+    rd(set, "decorColor", s.decorColor);
+    rd(set, "paletteLeft", s.paletteLeft);
+    rd(set, "paletteTop", s.paletteTop);
     const Value& snow = set["snow"];
     rd(snow, "density", s.snow.density);
     rd(snow, "windSpeed", s.snow.windSpeed);
@@ -372,6 +387,8 @@ void FromJson(const Value& root, AppState& st) {
     rd(ex, "dayNightTint", s.extras.dayNightTint);
     rd(ex, "santa", s.extras.santa);
     rd(ex, "train", s.extras.train);
+    rd(ex, "trainKnocks", s.extras.trainKnocksSnowmen);
+    rd(ex, "snowballs", s.extras.snowballs);
     rd(ex, "yeti", s.extras.yeti);
   }
 

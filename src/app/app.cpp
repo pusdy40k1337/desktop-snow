@@ -30,7 +30,7 @@ enum : UINT {
   ID_QUIT,
 };
 
-enum : UINT_PTR { T_FULLSCREEN = 1, T_SAVE, T_MONITORS, T_SLOW, T_TOPMOST, T_QUIT_AFTER, T_FS_DEBOUNCE, T_PAUSE_HOUR };
+enum : UINT_PTR { T_FULLSCREEN = 1, T_SAVE, T_MONITORS, T_SLOW, T_TOPMOST, T_QUIT_AFTER, T_FS_DEBOUNCE, T_PAUSE_HOUR, T_TRAIN_NOW };
 constexpr UINT HK_TOGGLE = 1, HK_DECORATE = 2;
 constexpr UINT WM_APP_SECOND_INSTANCE = WM_APP + 10;
 constexpr size_t kDiagHistory = 200;  // decision changes kept for "Copy diagnostics"
@@ -80,7 +80,10 @@ void App::LoadState() {
   if (r.corruptFileQuarantined) Balloon(T(Str::TipStateRecovered));
   // The registry is the source of truth for autostart (users can remove it in Task Manager).
   state_.settings.launchAtStartup = AutostartEnabled();
+  // The debug layer is opt-in only: a persisted debugOverlay flag is ignored
+  // unless this run was started with --debug (TEST.cmd/harness pass it).
   if (opts_.debug) state_.settings.debugOverlay = true;
+  else state_.settings.debugOverlay = false;
 }
 
 void App::ScheduleSave() {
@@ -125,6 +128,8 @@ void App::PushConfig() {
   cfg.decorateMode = decorate_;
   cfg.activeTool = tool_;
   cfg.hoverId = hoverId_;
+  cfg.paletteLeft = state_.settings.paletteLeft;
+  cfg.paletteTop = state_.settings.paletteTop;
   cfg.pickerOpen = colorPopup_.open;
   cfg.pickerX = colorPopup_.at.x;
   cfg.pickerY = colorPopup_.at.y;
@@ -225,12 +230,18 @@ std::vector<FsWindow> FullscreenCandidates(std::vector<HWND>& hwnds, HWND ownAll
         }
         std::string cls = WindowClass(h);
         if (cls == "Shell_TrayWnd" || cls == "Shell_SecondaryTrayWnd" || IsShellPopupClass(cls)) return TRUE;
+        // Shell thumbnails / tool popups must not influence the pause decision.
+        if ((ex & WS_EX_TOOLWINDOW) && (style & WS_CAPTION) != WS_CAPTION) return TRUE;
         RECT r;
         if (!GetFrameBounds(h, r) || r.right - r.left < 2 || r.bottom - r.top < 2) return TRUE;
         FsWindow w;
         w.frame = RectI(r.left, r.top, r.right, r.bottom);
         w.topmost = (ex & WS_EX_TOPMOST) != 0;
-        w.zoomed = IsZoomed(h) != FALSE;
+        WINDOWPLACEMENT wp{};
+        wp.length = sizeof(wp);
+        const bool placedMax = GetWindowPlacement(h, &wp) && PlacementSaysMaximized(wp.showCmd, wp.flags);
+        // Pause from the first frame of the restore animation, not after it.
+        w.zoomed = IsZoomed(h) != FALSE || placedMax;
         w.captioned = (style & WS_CAPTION) == WS_CAPTION;
         w.floating = (ex & WS_EX_TOOLWINDOW) != 0 || GetWindow(h, GW_OWNER) != nullptr;
         w.foreground = h == c->fgRoot;
@@ -294,7 +305,16 @@ void App::CheckFullscreen(bool immediate) {
   std::sort(raw.begin(), raw.end());
 
   bool changed;
-  if (immediate) {
+  // Hiding must feel instant: the moment a monitor becomes paused, apply the
+  // new set in this very frame (no debounce, no fade). Only resuming waits for
+  // the debounce so alt-tabbing does not make the snow flicker.
+  bool newlyPaused = false;
+  {
+    const std::vector<std::string>& applied = fsDebounce_.applied();
+    for (const auto& id : raw)
+      if (std::find(applied.begin(), applied.end(), id) == applied.end()) newlyPaused = true;
+  }
+  if (immediate || newlyPaused) {
     changed = raw != fsDebounce_.applied();
     fsDebounce_.reset(raw);
   } else {
@@ -642,8 +662,17 @@ void App::SettingsAction(UiAction a) {
       break;
     case UiAction::ClearSnow: engine_.Command(EngineCommand::ClearSnow); break;
     case UiAction::ClearDecorations:
-      state_.decor.trees.clear();
-      state_.decor.snowmen.clear();
+      // Everything: trees with their ornaments, snowmen and free-standing
+      // decorations, plus every rolled snowball.
+      ClearAllDecorations(state_.decor);
+      engine_.Command(EngineCommand::ClearSnowballs);
+      PushDecor();
+      ScheduleSave();
+      break;
+    case UiAction::ClearSnowmen:
+      // Only snowmen (placed and rolled), trees and other decorations stay.
+      ClearSnowmenOnly(state_.decor);
+      engine_.Command(EngineCommand::ClearSnowballs);
       PushDecor();
       ScheduleSave();
       break;
@@ -829,6 +858,9 @@ void App::ApplyPickerColor(int index) {
       if (f.id == colorPopup_.freeId) f.color = c;
   }
   colorPopup_.selected = c;
+  // The chosen colour also sticks for the next hats/scarves the user places.
+  state_.settings.decorColor = c;
+  PushConfig();
   PushDecor();
   ScheduleSave();
 }
@@ -984,8 +1016,10 @@ void App::DecorClick(POINT pt) {
         s.nx = clampf((baseX - static_cast<float>(work.left)) / static_cast<float>(std::max(1, work.width())), 0.f, 1.f);
         s.ny = clampf((baseY - static_cast<float>(work.top)) / static_cast<float>(std::max(1, work.height())), 0.f, 1.f);
         s.hat = 1;
-        s.hatColor = colorCycle_ % kDecorColorCount;
-        s.scarf = colorCycle_++ % kDecorColorCount;
+        s.hatColor = state_.settings.decorColor >= 0 ? state_.settings.decorColor % kDecorColorCount
+                                                     : colorCycle_ % kDecorColorCount;
+        s.scarf = state_.settings.decorColor >= 0 ? state_.settings.decorColor % kDecorColorCount
+                                                  : colorCycle_++ % kDecorColorCount;
         d.snowmen.push_back(s);
         changed = true;
       }
@@ -1001,9 +1035,10 @@ void App::DecorClick(POINT pt) {
         changed = true;
         OpenColorPicker(1, man->id, 0, pt, man->hatColor);
       } else if (!tree) {
-        FreeDecor* f = spawnFree(FreeKind::Hat, colorCycle_ % kDecorColorCount, (colorCycle_ % 3) + 1);
+        const int col = state_.settings.decorColor >= 0 ? state_.settings.decorColor % kDecorColorCount
+                                                        : colorCycle_++ % kDecorColorCount;
+        FreeDecor* f = spawnFree(FreeKind::Hat, col, (colorCycle_ % 3) + 1);
         if (f) {
-          colorCycle_++;
           changed = true;
           OpenColorPicker(3, 0, f->id, pt, f->color);
         }
@@ -1017,7 +1052,9 @@ void App::DecorClick(POINT pt) {
         }
         OpenColorPicker(2, man->id, 0, pt, man->scarf);
       } else if (!tree) {
-        FreeDecor* f = spawnFree(FreeKind::Scarf, colorCycle_++ % kDecorColorCount, 1);
+        const int col = state_.settings.decorColor >= 0 ? state_.settings.decorColor % kDecorColorCount
+                                                        : colorCycle_++ % kDecorColorCount;
+        FreeDecor* f = spawnFree(FreeKind::Scarf, col, 1);
         if (f) {
           changed = true;
           OpenColorPicker(3, 0, f->id, pt, f->color);
@@ -1107,35 +1144,110 @@ LRESULT App::HandleCatcher(HWND h, UINT m, WPARAM w, LPARAM l) {
       GetMonitorInfoW(mon, &mi);
       const RectI work(mi.rcWork.left, mi.rcWork.top, mi.rcWork.right, mi.rcWork.bottom);
       const float dpi = MonitorScale(mon);
+      auto overUi = [&](const PaletteLayout& pl, const RectI& hint) {
+        if (PaletteUiHit(pl, pt.x, pt.y, 8)) return true;
+        if (pt.x >= hint.left - 8 && pt.x < hint.right + 8 && pt.y >= hint.top - 8 && pt.y < hint.bottom + 8) return true;
+        if (colorPopup_.open) {
+          ColorPickerLayout cp = LayoutColorPicker(colorPopup_.at.x, colorPopup_.at.y, work, dpi);
+          if (ColorPickerUiHit(cp, pt.x, pt.y, 8)) return true;
+        }
+        return false;
+      };
+      if (m == WM_MOUSEMOVE && paletteDrag_) {
+        const int left = static_cast<int>(pt.x - paletteGrabX_);
+        const int top = static_cast<int>(pt.y - paletteGrabY_);
+        RectI moved(left, top, left + paletteBar_.width(), top + paletteBar_.height());
+        RectI clamped = ClampPaletteRect(moved, work);
+        if (clamped.left != state_.settings.paletteLeft || clamped.top != state_.settings.paletteTop) {
+          state_.settings.paletteLeft = clamped.left;
+          state_.settings.paletteTop = clamped.top;
+          paletteBar_ = clamped;
+          PushConfig();
+        }
+        return 0;
+      }
       if (m == WM_LBUTTONDOWN) {
         // Colour picker first: it floats above everything.
         if (colorPopup_.open) {
           ColorPickerLayout cp = LayoutColorPicker(colorPopup_.at.x, colorPopup_.at.y, work, dpi);
-          const int sw = ColorPickerHit(cp, pt.x, pt.y);
+          const int sw = ColorPickerHit(cp, pt.x, pt.y, 2);
           if (sw >= 0) {
+            // Keep the popup open and still bound to the same hat/scarf: every
+            // further swatch click recolours that item instead of falling
+            // through to the canvas and spawning a duplicate.
             ApplyPickerColor(sw);
-            colorPopup_.open = false;
-            PushConfig();
             swallowUp_ = true;
+            return 0;
+          }
+          if (ColorPickerUiHit(cp, pt.x, pt.y, 8)) {
+            swallowUp_ = true;  // inside the popup frame: keep it open if not on a swatch
             return 0;
           }
           colorPopup_.open = false;  // click outside closes it; the click continues
           PushConfig();
         }
-        // Palette next.
-        PaletteLayout pl = LayoutPalette(work, dpi);
-        Tool t;
-        if (PaletteHit(pl, pt.x, pt.y, t)) {
-          if (t == Tool::Done) ExitDecorate();
-          else {
-            RestoreHoverPreview();
-            tool_ = t;
-            hoverId_ = 0;
-            PushDecor();
-            PushConfig();
+        // The toolbar is a UI element: a press on it never reaches the canvas.
+        PaletteLayout pl = LayoutPalette(work, dpi, state_.settings.paletteLeft, state_.settings.paletteTop);
+        const RectI hint = HintRect(work, pl.bar, dpi);
+        if (PaletteUiHit(pl, pt.x, pt.y, 6)) {
+          Tool t;
+          if (PaletteHit(pl, pt.x, pt.y, t)) {
+            if (t == Tool::Done) {
+              ExitDecorate();
+            } else {
+              RestoreHoverPreview();
+              tool_ = t;
+              hoverId_ = 0;
+              PushDecor();
+              PushConfig();
+            }
+          } else {
+            // Free part of the bar (frame / gaps): drag the whole toolbar.
+            paletteDrag_ = true;
+            paletteGrabX_ = static_cast<float>(pt.x - pl.bar.left);
+            paletteGrabY_ = static_cast<float>(pt.y - pl.bar.top);
+            paletteBar_ = pl.bar;
+            SetCapture(h);
           }
           swallowUp_ = true;
           return 0;
+        }
+        if (overUi(pl, hint) && !PaletteUiHit(pl, pt.x, pt.y, 8)) {
+          swallowUp_ = true;  // the hint plate swallows clicks too
+          return 0;
+        }
+        // Hat/scarf tool: a click on an existing snowman (its hat sits a little
+        // above the body box) or on an already placed free hat/scarf selects it
+        // and opens the colour popup again - never spawns a duplicate.
+        if (tool_ == Tool::Hat || tool_ == Tool::Scarf) {
+          const FreeKind wantKind = tool_ == Tool::Hat ? FreeKind::Hat : FreeKind::Scarf;
+          std::vector<DecorLayoutItem> lay;
+          engine_.GetDecorLayout(lay);
+          for (const auto& it : lay) {
+            if (!it.visible || it.cls != 1) continue;
+            if (pt.x < it.left - 8 || pt.x > it.right + 8) continue;
+            if (pt.y < it.top - 0.34f * it.height || pt.y > it.bottom + 4) continue;
+            for (auto& s : state_.decor.snowmen) {
+              if (s.id != it.id) continue;
+              hoverId_ = s.id;
+              OpenColorPicker(tool_ == Tool::Hat ? 1 : 2, s.id, 0, pt,
+                              tool_ == Tool::Hat ? s.hatColor : s.scarf);
+              PushDecor();
+              PushConfig();
+              swallowUp_ = true;
+              return 0;
+            }
+          }
+          for (const auto& it : lay) {
+            if (!it.visible || it.cls != 2) continue;
+            if (pt.x < it.left - 8 || pt.x > it.right + 8 || pt.y < it.top - 8 || pt.y > it.bottom + 8) continue;
+            for (auto& f : state_.decor.free) {
+              if (f.id != it.id || f.kind != wantKind) continue;
+              OpenColorPicker(3, 0, f.id, pt, f.color);
+              swallowUp_ = true;
+              return 0;
+            }
+          }
         }
         std::vector<DecorLayoutItem> layout;
         bool isTree = false;
@@ -1156,6 +1268,17 @@ LRESULT App::HandleCatcher(HWND h, UINT m, WPARAM w, LPARAM l) {
         return 0;
       }
       if (m == WM_MOUSEMOVE) {
+        PaletteLayout pl = LayoutPalette(work, dpi, state_.settings.paletteLeft, state_.settings.paletteTop);
+        const RectI hint = HintRect(work, pl.bar, dpi);
+        if (overUi(pl, hint)) {
+          if (hoverId_ != 0 || previewActive_) {
+            RestoreHoverPreview();
+            hoverId_ = 0;
+            PushDecor();
+            PushConfig();
+          }
+          return 0;  // no hover ghost / no dragging under the UI
+        }
         if (pressed_ && dragId_ && !dragging_ && (std::abs(pt.x - pressPt_.x) > 4 || std::abs(pt.y - pressPt_.y) > 4)) {
           dragging_ = true;
           RestoreHoverPreview();
@@ -1218,6 +1341,13 @@ LRESULT App::HandleCatcher(HWND h, UINT m, WPARAM w, LPARAM l) {
       }
       // WM_LBUTTONUP
       ReleaseCapture();
+      if (paletteDrag_) {
+        paletteDrag_ = false;
+        pressed_ = dragging_ = false;
+        dragKind_ = DragKind::None;
+        ScheduleSave();
+        return 0;
+      }
       if (swallowUp_) {
         swallowUp_ = false;
         pressed_ = dragging_ = false;
@@ -1327,6 +1457,20 @@ LRESULT App::Handle(HWND h, UINT m, WPARAM w, LPARAM l) {
       std::vector<SnowmanUpdate> ups;
       engine_.TakeSnowmanUpdates(ups);
       bool changed = false;
+      // Balls stacked three high turn into a real snowman on that edge.
+      std::vector<SnowballSnowmanSpawn> ballSpawns;
+      engine_.TakeSnowballSpawns(ballSpawns);
+      for (const auto& sp : ballSpawns) {
+        if (static_cast<int>(state_.decor.snowmen.size()) >= kMaxSnowmen) break;
+        const int color = state_.settings.decorColor >= 0 ? state_.settings.decorColor % kDecorColorCount : 0;
+        SnowmanDecor s = MakeSnowmanFromBalls(state_.decor.nextId++, sp.scale, clampf(sp.relX, 0.05f, 0.95f),
+                                              sp.fBottom, sp.fMiddle, sp.fTop, sp.layers, color, color);
+        s.free = false;
+        s.anchor.taskbar = sp.taskbar;
+        s.anchor.hwnd = sp.surface;
+        state_.decor.snowmen.push_back(s);
+        changed = true;
+      }
       for (const auto& up : ups) {
         for (auto& s : state_.decor.snowmen) {
           if (s.id != up.id) continue;
@@ -1383,6 +1527,11 @@ LRESULT App::Handle(HWND h, UINT m, WPARAM w, LPARAM l) {
         case T_TOPMOST:
           KillTimer(hwnd_, T_TOPMOST);
           engine_.Command(EngineCommand::ReassertTopmost);
+          break;
+        case T_TRAIN_NOW:
+          KillTimer(hwnd_, T_TRAIN_NOW);
+          engine_.Command(EngineCommand::Train);
+          Log("debug: gift train requested (--train-now)");
           break;
         case T_QUIT_AFTER:
           DestroyWindow(hwnd_);
@@ -1534,6 +1683,7 @@ int App::Run(const LaunchOptions& opts) {
   CheckFullscreen(true);
   SetTimer(hwnd_, T_FULLSCREEN, 500, nullptr);
   SetTimer(hwnd_, T_SLOW, 30000, nullptr);
+  if (opts_.trainNow) SetTimer(hwnd_, T_TRAIN_NOW, 2000, nullptr);
   if (!opts_.harness && !opts_.noPersist && state_.decor.trees.empty() && state_.decor.snowmen.empty() &&
       !store_->file().empty()) {
     // First run: nothing to configure, just a hint where the menu lives.

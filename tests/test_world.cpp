@@ -305,3 +305,154 @@ TEST(actors_santa_and_yeti_lifecycle) {
   CHECK(!a.yeti().active);
   CHECK(!a.trigger(ActorKind::Yeti, t, mons, {}));  // nobody to hunt
 }
+
+TEST(world_cursor_breeze_pushes_falling_flakes) {
+  World w;
+  SimSettings set = Quiet();
+  set.snowing = true;
+  set.intensity = 1.f;
+  set.cursorBreeze = 1.f;  // slider at 100 %: the strongest allowed draught
+  w.configure(set);
+  w.setMonitors(OneMonitor());
+  std::vector<WindowInput> none;
+  for (int i = 0; i < 120; ++i) w.update(i / 60.0, 1 / 60.f, none);
+  w.setCursor(Vec2(300.f, 300.f), true);
+  w.setCursor(Vec2(1500.f, 300.f), true);  // a fast stroke across the screen
+  w.update(2.1, 1 / 60.f, none);
+  int pushed = 0;
+  for (const auto& p : w.particles())
+    if (p.kind == ParticleKind::Flake && std::fabs(p.vx) > 25.f) ++pushed;
+  CHECK(pushed > 0);
+}
+
+TEST(world_sweep_keeps_debris_per_frame_bounded) {
+  World w;
+  SimSettings set = Quiet();
+  set.initialDusting = 0.9f;
+  set.cursorSweep = true;
+  w.configure(set);
+  w.setMonitors(OneMonitor());
+  std::vector<WindowInput> wins = {Win(1, RectI(400, 500, 1400, 900), 0)};
+  w.update(0.016, 1 / 60.f, wins);
+  int prev = w.stats().debris;
+  for (int f = 0; f < 24; ++f) {
+    w.setCursor(Vec2(450.f + f * 35.f, 495.f), true);
+    w.update(0.033 + f / 60.0, 1 / 60.f, wins);
+    const int nowDebris = w.stats().debris;
+    CHECK_MSG(nowDebris - prev <= 60, "sweeping spawns a bounded burst per frame");
+    prev = nowDebris;
+  }
+}
+
+TEST(world_slow_cursor_still_erases_the_drift) {
+  World w;
+  SimSettings set = Quiet();
+  set.initialDusting = 0.5f;
+  set.cursorSweep = true;
+  w.configure(set);
+  w.setMonitors(OneMonitor());
+  std::vector<WindowInput> wins = {Win(1, RectI(400, 500, 1400, 900), 0)};
+  w.update(0.016, 1 / 60.f, wins);
+  const float before = w.surface(1)->pile.mass();
+  float x = 450.f;
+  for (int f = 0; f < 60; ++f) {
+    x += 2.f;  // ~120 px/s: slow, below the old 280 px/s threshold
+    w.setCursor(Vec2(x, 495.f), true);
+    w.update(0.033 + f / 60.0, 1 / 60.f, wins);
+  }
+  CHECK(w.surface(1)->pile.mass() < before * 0.9f);
+}
+
+TEST(world_breeze_moves_flakes_not_just_their_velocity_field) {
+  SimSettings set = Quiet();
+  set.snowing = true;
+  set.intensity = 1.f;
+  set.cursorBreeze = 1.f;
+  World a, b;
+  a.configure(set);
+  b.configure(set);
+  a.setMonitors(OneMonitor());
+  b.setMonitors(OneMonitor());
+  std::vector<WindowInput> none;
+  for (int i = 0; i < 120; ++i) {
+    a.update(i / 60.0, 1 / 60.f, none);
+    b.update(i / 60.0, 1 / 60.f, none);
+  }
+  a.setCursor(Vec2(300.f, 300.f), true);
+  a.setCursor(Vec2(1500.f, 300.f), true);  // fast stroke
+  b.setCursor(Vec2(300.f, 300.f), true);
+  b.setCursor(Vec2(300.f, 300.f), true);  // no movement
+  a.update(2.1, 1 / 60.f, none);
+  b.update(2.1, 1 / 60.f, none);
+  const auto& pa = a.particles();
+  const auto& pb = b.particles();
+  CHECK(!pa.empty() && pa.size() == pb.size());
+  bool moved = false;
+  for (size_t i = 0; i < pa.size(); ++i)
+    if (pa[i].kind == ParticleKind::Flake && (std::fabs(pa[i].x - pb[i].x) > 0.5f || std::fabs(pa[i].y - pb[i].y) > 0.5f))
+      moved = true;
+  CHECK(moved);
+}
+
+TEST(world_cursor_breeze_scales_with_the_setting) {
+  // Measures the draught itself (Particle::breezeX) after a realistic mouse
+  // stroke: 15 px per frame (~900 px/s), not a teleport across the screen.
+  auto breeze = [](float amount) {
+    SimSettings set = Quiet();
+    set.snowing = true;
+    set.intensity = 1.f;
+    set.cursorBreeze = amount;
+    World w;
+    w.configure(set);
+    w.setMonitors(OneMonitor());
+    std::vector<WindowInput> none;
+    for (int i = 0; i < 120; ++i) w.update(i / 60.0, 1 / 60.f, none);
+    float x = 300.f;
+    for (int f = 0; f < 20; ++f) {
+      x += 15.f;
+      w.setCursor(Vec2(x, 300.f), true);
+      w.update(2.0 + f / 60.0, 1 / 60.f, none);
+    }
+    double sum = 0.0;
+    int n = 0;
+    float peak = 0.f;
+    for (const auto& p : w.particles()) {
+      if (p.kind != ParticleKind::Flake) continue;
+      sum += std::fabs(p.breezeX);
+      peak = std::max(peak, std::fabs(p.breezeX));
+      ++n;
+    }
+    return std::pair<double, float>{n > 0 ? sum / n : 0.0, peak};
+  };
+  const auto off = breeze(0.f);
+  const auto soft = breeze(0.30f);
+  const auto full = breeze(1.f);
+  CHECK(off.first == 0.0 && off.second == 0.f);  // 0 %: the mouse never touches snow
+  CHECK(soft.first > 0.0);
+  CHECK_MSG(full.first / soft.first >= 1.8 && full.first / soft.first <= 5.0,
+            "the slider scales the draught proportionally");
+  CHECK_MSG(full.second <= 260.5f, "the draught is clamped, flakes never turn into bullets");
+}
+
+TEST(world_pile_height_slider_shrinks_live_snow) {
+  World w;
+  SimSettings set = Quiet();
+  set.initialDusting = 0.9f;
+  set.pileMaxHeight = 40.f;
+  w.configure(set);
+  w.setMonitors(OneMonitor());
+  std::vector<WindowInput> wins = {Win(1, RectI(400, 500, 1400, 900), 0)};
+  for (int i = 0; i < 30; ++i) w.update(i / 60.0, 1 / 60.f, wins);
+  const float tall = w.surface(1)->pile.peak();
+  CHECK(tall > 12.f);
+  // The user drags "Pile height" down to 10: what is already lying shrinks now.
+  set.pileMaxHeight = 10.f;
+  w.configure(set);
+  CHECK(w.surface(1)->pile.peak() <= 10.f + 1e-3f);
+  CHECK(w.surface(1)->pile.peak() < tall);
+  // And raising it again allows the drift to grow past the old low cap.
+  set.pileMaxHeight = 40.f;
+  w.configure(set);
+  for (int i = 0; i < 60; ++i) w.update(1.0 + i / 60.0, 1 / 60.f, wins);
+  CHECK(w.surface(1)->pile.peak() > 10.5f);
+}

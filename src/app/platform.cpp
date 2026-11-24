@@ -1,5 +1,7 @@
 #include "platform.h"
 
+#include "../core/fullscreen.h"
+
 #include <dwmapi.h>
 #include <shellscalingapi.h>
 #include <shlobj.h>
@@ -197,6 +199,7 @@ std::string WindowClass(HWND hwnd) {
 }
 
 bool IsShellPopupClass(const std::string& cls) {
+  if (snow::IsShellOverlayWindowClass(cls)) return true;
   static const char* kSkip[] = {"Progman",        "WorkerW",          "#32768",
                                 "tooltips_class32", "SysShadow",      "Xaml_WindowedPopupClass",
                                 "TaskListThumbnailWnd", "MultitaskingViewFrame", "ForegroundStaging",

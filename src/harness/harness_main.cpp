@@ -1979,8 +1979,13 @@ void RunFullscreenTest(Context& ctx, HANDLE quitEvent, HANDLE job) {
           {"borderless fullscreen 2 px short", WS_POPUP, 0, RECT{mon.left, mon.top, mon.right - 2, mon.bottom - 2},
            false, true},
           {"always-on-top fullscreen window", WS_POPUP, WS_EX_TOPMOST, mon, false, true},
-          {"window 24 px short of the work area", WS_POPUP, 0, RECT{work.left, work.top, work.right, work.bottom - 24},
-           false, false},
+          // Collective coverage rule: a window that leaves only a thin strip of
+          // desktop still hides >= 90 % of the work area, so the snow pauses...
+          {"window 20 px short of the work area", WS_POPUP, 0, RECT{work.left, work.top, work.right, work.bottom - 20},
+           false, true},
+          // ...while a window leaving a fifth of the desktop visible must not.
+          {"window a fifth of the work area short", WS_POPUP, 0,
+           RECT{work.left, work.top, work.right, work.bottom - (work.bottom - work.top) / 5}, false, false},
       };
       for (const PauseCase& pc : cases) {
         HWND w = nullptr;

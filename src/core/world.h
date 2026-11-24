@@ -44,6 +44,7 @@ struct Particle {
   float phase = 0, sway = 0;
   float r1 = 0, r2 = 0;       // per-particle random factors (size, speed)
   float spin = 0, angle = 0;  // confetti
+  float breezeX = 0, breezeY = 0;  // cursor-draught offset, decays over time
   uint16_t monitor = 0;
   uint8_t layer = 1;          // 0 far, 1 mid, 2 near
   uint8_t colorIndex = 0;
@@ -95,6 +96,7 @@ struct SimSettings {
   ScatterParams scatter;
   float inherit = 0.55f;
   bool windGusts = true, cursorSweep = true, melt = false, sparkle = true;
+  float cursorBreeze = 0.30f;  // 0..1, how strongly the mouse drifts the flakes
   bool reducedMotion = false;
   float initialDusting = 0.22f;  // fraction of cap given to windows present at start
   int maxParticles = 6000;
@@ -128,6 +130,9 @@ class World {
   void clearSnow();
   void kick(uint64_t surfaceId, float impulse);
   void puff(Vec2 p, int count, float scale);
+  // A rolling snowball scooped the snow in [x0, x1) local px of this edge.
+  // Returns the collected mass (height-px); the pile keeps its own relaxation.
+  float carvePile(uint64_t surfaceId, float x0, float x1);
 
   const std::unordered_map<uint64_t, Surface>& surfaces() const { return surfaces_; }
   const Surface* surface(uint64_t id) const;

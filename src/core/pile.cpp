@@ -33,6 +33,12 @@ void PileModel::setParams(const PileParams& p) {
       h_[static_cast<size_t>(i)] = old[static_cast<size_t>(a)] * (1.f - t) + old[static_cast<size_t>(b)] * t;
     }
   }
+  // Lowering the "pile height" slider must shrink what is already lying on the
+  // windows/taskbar, not just future snowfall.
+  if (p_.maxHeight > 0.f) {
+    for (float& v : h_)
+      if (v > p_.maxHeight) v = p_.maxHeight;
+  }
   recap();
   ++version_;
 }
@@ -321,6 +327,20 @@ float PileModel::removeRange(float x0, float x1, float fraction, float massPerPa
   if (i1 <= i0) return 0.f;
   float centre = 0.5f * (x0 + x1), half = 0.5f * (x1 - x0) + p_.columnStep;
   float removed = removeColumns(h_, i0, i1, fraction, centre, half, p_.columnStep, massPerParticle, maxDebris, out);
+  if (removed > 0.f) ++version_;
+  return removed;
+}
+
+float PileModel::carveRange(float x0, float x1) {
+  if (h_.empty() || x1 <= x0) return 0.f;
+  int i0 = std::max(0, static_cast<int>(std::floor(x0 / p_.columnStep)));
+  int i1 = std::min(columns(), static_cast<int>(std::ceil(x1 / p_.columnStep)));
+  if (i1 <= i0) return 0.f;
+  float removed = 0.f;
+  for (int i = i0; i < i1; ++i) {
+    removed += h_[static_cast<size_t>(i)];
+    h_[static_cast<size_t>(i)] = 0.f;
+  }
   if (removed > 0.f) ++version_;
   return removed;
 }

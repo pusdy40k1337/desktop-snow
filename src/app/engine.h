@@ -23,6 +23,7 @@ struct LaunchOptions {
   std::wstring telemetryPath; // per-frame CSV (window vs pile)
   std::wstring logPath;       // --log: append the log here instead of %LOCALAPPDATA%\DesktopSnow\logs
   bool diagnostics = false;   // --diagnostics: log every pause decision every 0.5 s
+  bool trainNow = false;      // --train-now: send the gift train once, ~2 s after start
   int quitAfter = 0;          // --quit-after <s>: exit after this many seconds (0 = never)
   std::string syncOverride;   // "latch" | "vsync" | ""
   int predictOverride = -1;   // -1 = settings, 0 off, 1 on
@@ -41,6 +42,9 @@ struct EngineConfig {
   bool decorateMode = false;
   Tool activeTool = Tool::Tree;
   uint32_t hoverId = 0;
+  // Toolbar position (absolute px, -1 = the default top-centre spot).
+  int paletteLeft = -1;
+  int paletteTop = -1;
   // Colour picker popup for hats/scarves (drawing only; hit-testing is in App).
   bool pickerOpen = false;
   int pickerX = 0, pickerY = 0;
@@ -50,7 +54,7 @@ struct EngineConfig {
   HWND keepAbove = nullptr;  // our settings window: overlays stay below it while it is topmost
 };
 
-enum class EngineCommand { ClearSnow, Santa, Train, Yeti, MonitorsChanged, ReassertTopmost };
+enum class EngineCommand { ClearSnow, ClearSnowballs, Santa, Train, Yeti, MonitorsChanged, ReassertTopmost };
 
 struct DecorLayoutItem {
   uint32_t id = 0;
@@ -69,6 +73,21 @@ struct SnowmanUpdate {
   WindowAnchor anchor;
 };
 
+// A tower of snowballs rolled into a snowman: the app turns it into a real
+// SnowmanDecor standing on that surface edge.
+struct SnowballSnowmanSpawn {
+  uint64_t surface = 0;   // HWND (0 = taskbar/ground)
+  float relX = 0.5f;      // 0..1 along the edge
+  float scale = 1.f;      // DPI scale of the surface
+  bool taskbar = false;   // the tower stands on the taskbar
+  // Radii of the balls the user actually rolled, as fractions of the height,
+  // plus how many tiers the tower has (2 = body + head, 3 = with the middle).
+  float fBottom = 0.20f;
+  float fMiddle = 0.15f;
+  float fTop = 0.112f;
+  int layers = 3;
+};
+
 class Engine {
  public:
   Engine();
@@ -80,6 +99,7 @@ class Engine {
   void Command(EngineCommand c);
   void GetDecorLayout(std::vector<DecorLayoutItem>& out);
   void TakeSnowmanUpdates(std::vector<SnowmanUpdate>& out);
+  void TakeSnowballSpawns(std::vector<SnowballSnowmanSpawn>& out);
   std::vector<HWND> OverlayWindows();
   double Fps() const;  // overlay frame rate over the last second (0 before the first second)
 

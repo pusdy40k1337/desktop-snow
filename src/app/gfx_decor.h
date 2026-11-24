@@ -36,6 +36,14 @@ class DecorRenderer {
   // wobble: lean angle in radians (window jolts, yeti scares).
   void DrawSnowman(const DecorFrame& f, const SnowmanDecor& sm, D2D1_POINT_2F base, float height,
                    float build, float wobble, bool highlight);
+  // A snowman hit by the train: every piece (three balls, stick arms, coal
+  // buttons, scarf, face with the carrot, hat) flies on its own pose from
+  // core/knock.h and is rebuilt on the spot when the tumble ends.
+  void DrawSnowmanBroken(const DecorFrame& f, const SnowmanDecor& sm, D2D1_POINT_2F base, float height,
+                         double t, int dir, uint32_t seed);
+  // Snowman assembled from rolled balls: keeps the user's actual radii.
+  void DrawSnowmanCustom(const DecorFrame& f, const SnowmanDecor& sm, D2D1_POINT_2F base, float height,
+                         float wobble, bool highlight);
 
   void DrawSanta(const DecorFrame& f, const SantaState& s);
   void DrawTrain(const DecorFrame& f, const TrainState& t);
@@ -43,6 +51,9 @@ class DecorRenderer {
 
   // Free-standing decoration placed anywhere on the desktop.
   void DrawFreeDecor(const DecorFrame& f, const FreeDecor& d, D2D1_POINT_2F centre, float size, bool highlight);
+  // The snowball being rolled: a shaded ball with snow crust details spinning
+  // with the ball (radius in px, spin in radians).
+  void DrawSnowball(const DecorFrame& f, D2D1_POINT_2F centre, float radius, float spin);
 
   // Colour picker popup for hats/scarves.
   void DrawColorPicker(const DecorFrame& f, const ColorPickerLayout& layout, int selected);

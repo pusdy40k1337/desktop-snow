@@ -17,6 +17,7 @@ enum class UiAction {
   Decorate,
   ClearSnow,
   ClearDecorations,
+  ClearSnowmen,
   Santa,
   Train,
   Yeti,

@@ -259,6 +259,12 @@ void World::kick(uint64_t surfaceId, float impulse) {
   if (it != surfaces_.end()) it->second.wobbleVel += impulse;
 }
 
+float World::carvePile(uint64_t surfaceId, float x0, float x1) {
+  auto it = surfaces_.find(surfaceId);
+  if (it == surfaces_.end()) return 0.f;
+  return it->second.pile.carveRange(x0, x1);
+}
+
 void World::puff(Vec2 at, int count, float scale) {
   for (int i = 0; i < count && static_cast<int>(particles_.size()) < s_.maxParticles; ++i) {
     Particle p;
@@ -395,11 +401,45 @@ void World::updateCursor(float dt) {
   }
   Vec2 v = (cursor_ - cursorPrev_) * (1.f / dt);
   cursorVel_ = v;
-  if (!s_.cursorSweep || s_.reducedMotion) return;
-  float speed = v.length();
+  const float speed = v.length();
+
+  // A fast cursor is a breeze for the falling flakes: they drift away from the
+  // pointer instead of passing straight through it. Works even with reduced
+  // motion (weaker), because the user explicitly expects the reaction.
+  if (speed > 25.f && !particles_.empty()) {
+    const float R = 125.f;
+    const float R2 = R * R;
+    const float strength = std::min(1.f, (speed - 60.f) / 900.f) * (s_.reducedMotion ? 0.45f : 1.f);
+    for (auto& p : particles_) {
+      if (p.kind != ParticleKind::Flake) continue;
+      const float dx = p.x - cursor_.x, dy = p.y - cursor_.y;
+      const float d2 = dx * dx + dy * dy;
+      if (d2 > R2 || d2 < 1e-3f) continue;
+      const float falloff = 1.f - std::sqrt(d2) / R;
+      const float f = falloff * falloff * strength;
+      // The user-facing amount scales the whole draught; 0 % means the mouse
+      // never touches the falling snow at all.
+      const float amount = s_.cursorBreeze;
+      if (amount <= 0.001f) continue;
+      // Gentle velocity kick per frame (about a third of the old force at
+      // 100 %), clamped so a flick can never shoot a flake off the screen.
+      const float bx = (v.x * 0.11f + dx * 0.70f - dy * 0.20f) * f * amount;
+      const float by = (v.y * 0.11f + dy * 0.70f + dx * 0.20f) * f * amount;
+      p.breezeX = clampf(p.breezeX + bx, -260.f, 260.f);
+      p.breezeY = clampf(p.breezeY + by, -220.f, 220.f);
+    }
+  }
+  if (s_.reducedMotion) return;
+
+  if (!s_.cursorSweep) return;
+  // Any movement clears snow: a slow stroke brushes it away smoothly, a fast
+  // flick also throws particles. Only the debris has a speed gate.
+  const float move = (cursor_ - cursorPrev_).length();
+  if (move < 0.5f) return;
+  int budget = 12;
   for (Surface* s : active_) {
+    if (budget <= 0) break;
     float scale = s->scale;
-    if (speed < 280.f * scale) continue;
     float lx = cursor_.x - static_cast<float>(s->rect.left);
     if (lx < 0 || lx > s->pile.width()) continue;
     float h = s->pile.heightAt(lx);
@@ -410,9 +450,15 @@ void World::updateCursor(float dt) {
     if (col < static_cast<int>(s->exposed.size()) && !s->exposed[static_cast<size_t>(col)]) continue;
     float r = 18.f * scale;
     debrisTmp_.clear();
-    float frac = clampf(speed / 1500.f, 0.15f, 0.8f);
-    s->pile.removeRange(lx - r, lx + r, frac, 2.2f * scale * scale, 30, debrisTmp_);
-    spawnDebris(*s, debrisTmp_, v * 0.35f + Vec2(0, -80.f * scale), 60.f * scale);
+    const bool fast = speed > 320.f * scale;
+    const float frac = fast ? clampf(speed / 1500.f, 0.20f, 0.8f) : 0.18f;
+    // Slow strokes: the snow is just pressed away (no particles, no bursts).
+    const int maxDebris = fast ? std::min(8, budget) : 0;
+    s->pile.removeRange(lx - r, lx + r, frac, 2.2f * scale * scale, maxDebris, debrisTmp_);
+    if (fast && !debrisTmp_.empty()) {
+      budget -= static_cast<int>(debrisTmp_.size());
+      spawnDebris(*s, debrisTmp_, v * 0.35f + Vec2(0, -80.f * scale), 60.f * scale);
+    }
   }
 }
 
@@ -494,12 +540,18 @@ void World::updateParticles(float dt) {
     float vy = s_.fallSpeed * L.speed * (0.75f + 0.5f * p.r2) * scale * speedMul;
     if (p.kind == ParticleKind::Confetti) vy *= 0.8f;
     float vx = windNow_ * L.wind * scale + std::sin(t * p.sway + p.phase) * swayAmp;
-    p.vx = vx;
-    p.vy = vy;
+    // A cursor draught is a persistent offset on top of the wind, fading out.
+    const float breezeDecay = std::exp(-2.2f * dt);
+    p.breezeX *= breezeDecay;
+    p.breezeY *= breezeDecay;
+    p.vx = vx + p.breezeX;
+    p.vy = vy + p.breezeY;
     p.size = lerpf(s_.flakeMin, s_.flakeMax, p.r1) * L.size * scale;
     p.prevY = p.y;
-    p.x += vx * dt;
-    p.y += vy * dt;
+    // Move with the full velocity: the cursor draught (breezeX/Y) must actually
+    // push the flake, not just sit in the velocity field.
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
     if (p.kind == ParticleKind::Confetti) p.angle += p.spin * dt;
 
     if (p.kind == ParticleKind::Flake && s_.piles && p.layer >= 1) {

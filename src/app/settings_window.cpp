@@ -254,6 +254,7 @@ UiAction ActionFor(const std::string& key, bool& ok) {
   if (key == "train") return UiAction::Train;
   if (key == "yeti") return UiAction::Yeti;
   if (key == "clear-decorations") return UiAction::ClearDecorations;
+  if (key == "clear-snowmen") return UiAction::ClearSnowmen;
   if (key == "clear-snow") return UiAction::ClearSnow;
   if (key == "copy-diagnostics") return UiAction::CopyDiagnostics;
   if (key == "save-diagnostics") return UiAction::SaveDiagnostics;
